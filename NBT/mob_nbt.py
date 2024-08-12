@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Union
 from enum import Enum
 from dataclasses import dataclass, field
 from nbt import NBTCompound, NBTList, NBTTag, NBTType, UUID
-from parameter import block_predicate, attribute_name, boolean, dimension, IntPosition, identifier
+from NBT.parameter import block_predicate, attribute_name, boolean, dimension, IntPosition, identifier
 
 @dataclass
 class StatusEffect(NBTCompound):
