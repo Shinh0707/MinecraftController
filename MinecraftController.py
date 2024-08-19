@@ -2,7 +2,7 @@ from __future__ import absolute_import, annotations
 import random
 import re
 import sys
-from typing import List, Tuple, Optional, Union, Dict, Any
+from typing import List, Literal, Tuple, Optional, Union, Dict, Any
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 import os
@@ -10,74 +10,21 @@ import uuid
 from PIL import Image
 import numpy as np
 from mcrcon import MCRcon
+from scipy.spatial import KDTree
 
-from NBT.block_nbt import Block, BlockState, NoteBlock, NoteBlockState
+from Command import Command
+from Command.CompoundCommand import AgentCommander, BaseSettings, GetPosition, GetRotation, SuperFlat
+from Command.Hobby import ImageCreator,convert_midi_to_grouped_noteblocks
+from NBT.MBlocks import MBlocks
+from NBT.block_nbt import Block, BlockState, CommandBlock, CommandBlockTag, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
+from NBT.item_nbt import Compass, CompassState, CompassTag, MItem
+from NBT.mob_nbt import ActiveEffects, Attribute, Attributes, CommonItemTags, CommonMobTags, HandItems, StatusEffect
 from NBT.nbt import NBTTag, NBTType, NBTCompound, UUID
-from NBT.parameter import angle, rotation, facing, boolean, identifier, IntPosition
-from NBT.selector import Target, SelectorType, GameMode, SortMethod, Position, Range
-
+from NBT.parameter import INFINITE, EffectType, Rotation, Seconds, angle, attribute_name, dimension, rotation, facing, boolean, identifier, IntPosition
+from NBT.selector import Difficulty, Target, SelectorType, GameMode, SortMethod, Range
+from MShape.MShape import MShape, Cube, Sphere, Pyramid, Plane, Cylinder
 
 class MinecraftController:
-    """
-    Minecraft サーバーを制御するためのクラスです。
-    server.properties ファイルから設定を読み込み、RCON を使用してコマンドを実行します。
-    もし、サーバーを起動していない場合は、server.jarファイルがあるディレクトリで、
-    ```
-    java -Xmx1024M -Xms1024M -jar server.jar nogui
-    ```
-    を実行しましょう
-    """
-    BLOCK_COLORS: Dict[str, Tuple[int, int, int]] = {
-        # Concrete
-        "white_concrete": (207, 213, 214),
-        "orange_concrete": (224, 97, 1),
-        "magenta_concrete": (169, 48, 159),
-        "light_blue_concrete": (36, 137, 199),
-        "yellow_concrete": (241, 175, 21),
-        "lime_concrete": (94, 169, 24),
-        "pink_concrete": (214, 101, 143),
-        "gray_concrete": (55, 58, 62),
-        "light_gray_concrete": (125, 125, 115),
-        "cyan_concrete": (21, 119, 136),
-        "purple_concrete": (100, 32, 156),
-        "blue_concrete": (45, 47, 143),
-        "brown_concrete": (96, 59, 31),
-        "green_concrete": (73, 91, 36),
-        "red_concrete": (142, 33, 33),
-        "black_concrete": (8, 10, 15),
-
-        # Wood Planks
-        "oak_planks": (162, 130, 78),
-        "spruce_planks": (104, 78, 47),
-        "birch_planks": (216, 203, 155),
-        "jungle_planks": (160, 115, 80),
-        "acacia_planks": (168, 90, 50),
-        "dark_oak_planks": (66, 43, 21),
-
-        # Stone types
-        "stone": (125, 125, 125),
-        "granite": (153, 114, 99),
-        "diorite": (180, 180, 183),
-        "andesite": (130, 130, 130),
-
-        # Ores
-        "coal_ore": (115, 115, 115),
-        "iron_ore": (135, 130, 126),
-        "gold_ore": (143, 140, 125),
-        "diamond_ore": (129, 140, 143),
-        "emerald_ore": (110, 129, 116),
-        "lapis_ore": (102, 112, 134),
-        "redstone_ore": (133, 107, 107),
-
-        # Nature
-        "grass_block": (127, 178, 56),
-        "dirt": (134, 96, 67),
-        "sand": (219, 211, 160),
-        "gravel": (136, 126, 126),
-        "oak_leaves": (60, 192, 41),
-        "birch_leaves": (128, 167, 85)
-    }
-
     def __init__(self, server_properties_path: str):
         self.server_properties_path = server_properties_path
         self.rcon = None
@@ -85,6 +32,8 @@ class MinecraftController:
         self.host_port = None
         self.port = None
         self.password = None
+        self.BLOCK_COLORS = None
+        self.print_command_result = False
         self._read_server_properties()
 
     def _read_server_properties(self):
@@ -111,494 +60,233 @@ class MinecraftController:
         if self.rcon:
             self.rcon.disconnect()
 
-    def clear(self, pos1: IntPosition, pos2: Optional[IntPosition] = None) -> None:
-        if pos2:
-            command = f"fill {pos1} {pos2} minecraft:air"
-        else:
-            command = f"setblock {pos1} minecraft:air"
-        self.rcon.command(command)
-
-    def get_position(self, entity: str) -> IntPosition:
-        command = f"data get entity {entity} Pos"
-        response = self.rcon.command(command)
-        match = re.search(
-            r'\[(-?\d+\.\d+)d\, (-?\d+\.\d+)d\, (-?\d+\.\d+)d\]', response)
-        if match:
-            x, y, z = map(int, map(float, match.groups()))
-            return IntPosition(x=x, y=y, z=z)
-        else:
-            raise ValueError(
-                f"Failed to parse position from response: {response}")
-
-    def setblock(self, block: Block, pos: IntPosition) -> None:
-        command = f"setblock {pos} {block}"
-        self.rcon.command(command)
-
-    def place_note_block(self, pos: IntPosition, note_block: NoteBlock, block_below: Block):
-        self.setblock(block_below, IntPosition(x=pos.x, y=pos.y - 1, z=pos.z))
-        self.setblock(note_block, pos)
-
-    def tp(self, target: str, pos: IntPosition) -> None:
-        command = f"tp {target} {pos}"
-        self.rcon.command(command)
-
-    def setblocks(self, pos: IntPosition, blocks: np.ndarray, start_edge: str = "northwest") -> None:
-        directions = {
-            "northwest": (1, 1, 1),
-            "northeast": (-1, 1, 1),
-            "southwest": (1, 1, -1),
-            "southeast": (-1, 1, -1)
-        }
-        dx, dy, dz = directions[start_edge]
-
-        for i in range(blocks.shape[0]):
-            for j in range(blocks.shape[1]):
-                for k in range(blocks.shape[2]):
-                    x = pos.x + i * dx
-                    y = pos.y + j * dy
-                    z = pos.z + k * dz
-                    block = blocks[i, j, k]
-                    self.setblock(block, IntPosition(x=x, y=y, z=z))
-
-    def fill(self, pos1: IntPosition, pos2: IntPosition, block: Block) -> None:
-        max_fill_size = 32
-        size_x = abs(pos2.x - pos1.x) + 1
-        size_y = abs(pos2.y - pos1.y) + 1
-        size_z = abs(pos2.z - pos1.z) + 1
-
-        segments_x = (size_x - 1) // max_fill_size + 1
-        segments_y = (size_y - 1) // max_fill_size + 1
-        segments_z = (size_z - 1) // max_fill_size + 1
-
-        step_x = 1 if pos2.x >= pos1.x else -1
-        step_y = 1 if pos2.y >= pos1.y else -1
-        step_z = 1 if pos2.z >= pos1.z else -1
-
-        for sx in range(segments_x):
-            for sy in range(segments_y):
-                for sz in range(segments_z):
-                    start_x = pos1.x + sx * max_fill_size * step_x
-                    start_y = pos1.y + sy * max_fill_size * step_y
-                    start_z = pos1.z + sz * max_fill_size * step_z
-
-                    end_x = min(start_x + (max_fill_size - 1) *
-                                step_x, pos2.x, key=lambda x: abs(x - pos1.x))
-                    end_y = min(start_y + (max_fill_size - 1) *
-                                step_y, pos2.y, key=lambda y: abs(y - pos1.y))
-                    end_z = min(start_z + (max_fill_size - 1) *
-                                step_z, pos2.z, key=lambda z: abs(z - pos1.z))
-
-                    command = f"fill {start_x} {start_y} {
-                        start_z} {end_x} {end_y} {end_z} {block}"
-                    self.rcon.command(command)
-
-    def fill_relative(self, pos1: IntPosition, relative_pos2: IntPosition, block: Block) -> None:
-        absolute_pos2 = IntPosition(
-            x=pos1.x + relative_pos2.x,
-            y=pos1.y + relative_pos2.y,
-            z=pos1.z + relative_pos2.z
-        )
-        self.fill(pos1, absolute_pos2, block)
-
-    def fill_centered(self, center: IntPosition, dx_pos: int, dx_neg: int, dy_pos: int, dy_neg: int, dz_pos: int, dz_neg: int, block: Block) -> None:
-        pos1 = IntPosition(
-            x=center.x - dx_neg,
-            y=center.y - dy_neg,
-            z=center.z - dz_neg
-        )
-        pos2 = IntPosition(
-            x=center.x + dx_pos,
-            y=center.y + dy_pos,
-            z=center.z + dz_pos
-        )
-        self.fill(pos1, pos2, block)
-
-    def _find_closest_block(self, color: Tuple[int, int, int]) -> str:
-        distances = {block: np.linalg.norm(np.array(color) - np.array(block_color))
-                     for block, block_color in self.BLOCK_COLORS.items()}
-        return min(distances, key=distances.get)
-
-    def create_image(self, image_path: str, start_pos: IntPosition, width: int = None, facing: str = 'south', orientation: str = 'horizontal', item_hold: bool = False):
-        img = Image.open(image_path)
-        img = img.convert('RGB')
-        if width:
-            height = int((width / img.width) * img.height)
-            img = img.resize((width, height), Image.LANCZOS)
-
-        img_array = np.array(img)
-
-        blocks = np.empty(img_array.shape[:2], dtype=object)
-        block_counts = {}
-        for y in range(img_array.shape[0]):
-            for x in range(img_array.shape[1]):
-                color = tuple(img_array[y, x][:3])
-                block_name = self._find_closest_block(color)
-                blocks[y, x] = Block(id=identifier(name=block_name))
-                block_counts[block_name] = block_counts.get(block_name, 0) + 1
-
-        if facing == 'north':
-            blocks = np.rot90(blocks, 2)
-        elif facing == 'east':
-            blocks = np.rot90(blocks, 1)
-        elif facing == 'west':
-            blocks = np.rot90(blocks, 3)
-
-        for y in range(blocks.shape[0]):
-            for x in range(blocks.shape[1]):
-                if orientation == 'vertical':
-                    if facing in ['north', 'south']:
-                        pos = IntPosition(
-                            x=start_pos.x + x, y=start_pos.y + blocks.shape[0] - y - 1, z=start_pos.z)
-                    else:  # east or west
-                        pos = IntPosition(
-                            x=start_pos.x, y=start_pos.y + blocks.shape[0] - y - 1, z=start_pos.z + x)
-                else:  # horizontal
-                    if facing in ['north', 'south']:
-                        pos = IntPosition(x=start_pos.x + x,
-                                          y=start_pos.y, z=start_pos.z + y)
-                    else:  # east or west
-                        pos = IntPosition(x=start_pos.x + y,
-                                          y=start_pos.y, z=start_pos.z + x)
-
-                self.setblock(blocks[y, x], pos)
-
-        print(f"Image created at {start_pos} facing {
-              facing}, orientation: {orientation}")
-
-        if item_hold:
-            self._fill_player_hotbar(block_counts)
-
-    def _fill_player_hotbar(self, block_counts: Dict[str, int]):
-        sorted_blocks = sorted(block_counts.items(),
-                               key=lambda x: x[1], reverse=True)
-        for i, (block_name, _) in enumerate(sorted_blocks[:9]):
-            self.rcon.command(
-                f"item replace entity @p hotbar.{i} with {block_name} 1")
-        print("Player's hotbar filled with the most used blocks.")
-
-    def kill(self, entity_selector: Target, invert: bool = False) -> None:
-        if invert:
-            command = f"kill @e[type=!player,type=!{entity_selector}]"
-        else:
-            command = f"kill {entity_selector}"
-        self.rcon.command(command)
-
-    def _apply_effects_with_tag(self, tag: str, effects: List[str]):
-        for effect in effects:
-            self.apply_effect(f"@e[tag={tag}]", effect)
-        self.rcon.command(f"tag @e[tag={tag}] remove {tag}")
-
-    def spawn(self, entity_type: str, pos: IntPosition, nbt: Optional[NBTCompound] = None, effects: Optional[List[str]] = None) -> None:
-        tag = f"temp_{uuid.uuid4().hex[:8]}" if effects else None
-
-        command = f"summon {entity_type} {pos}"
-        if nbt:
-            command += f" {nbt}"
-        if tag:
-            command += f" {{Tags:[\"{tag}\"]}}"
-
-        self.rcon.command(command)
-
-        if effects:
-            self._apply_effects_with_tag(tag, effects)
-
-    def spawn_random(self, entity_type: str, pos1: IntPosition, pos2: IntPosition, count: int = 1, nbt: Optional[NBTCompound] = None, effects: Optional[List[str]] = None) -> None:
-        tag = f"temp_{uuid.uuid4().hex[:8]}" if effects else None
-
-        for _ in range(count):
-            x = random.randint(min(pos1.x, pos2.x), max(pos1.x, pos2.x))
-            y = random.randint(min(pos1.y, pos2.y), max(pos1.y, pos2.y))
-            z = random.randint(min(pos1.z, pos2.z), max(pos1.z, pos2.z))
-            random_pos = IntPosition(x=x, y=y, z=z)
-
-            command = f"summon {entity_type} {random_pos}"
-            if nbt:
-                command += f" {nbt}"
-            if tag:
-                command += f" {{Tags:[\"{tag}\"]}}"
-
-            self.rcon.command(command)
-
-        if effects:
-            self._apply_effects_with_tag(tag, effects)
-
-    def spawn_with_mask(self, entity_type: str, pos: IntPosition, mask: np.ndarray, count: int = 1, nbt: Optional[NBTCompound] = None, effects: Optional[List[str]] = None) -> None:
-        tag = f"temp_{uuid.uuid4().hex[:8]}" if effects else None
-
-        spawn_positions = np.argwhere(mask)
-        for spawn_pos in random.choices(spawn_positions, k=count):
-            x, y, z = spawn_pos
-            spawn_pos = IntPosition(x=pos.x + x, y=pos.y + y, z=pos.z + z)
-
-            command = f"summon {entity_type} {spawn_pos}"
-            if nbt:
-                command += f" {nbt}"
-            if tag:
-                command += f" {{Tags:[\"{tag}\"]}}"
-
-            self.rcon.command(command)
-
-        if effects:
-            self._apply_effects_with_tag(tag, effects)
-    
-    def apply_effect(self, target: str, effect: str) -> None:
-        command = f"effect give {target} {effect}"
-        self.rcon.command(command)
-
-    def remove_effect(self, target: str, effect_id: Union[str, None] = None) -> None:
-        if effect_id:
-            command = f"effect clear {target} {effect_id}"
-        else:
-            command = f"effect clear {target}"
-        self.rcon.command(command)
-
-    def get_active_effects(self, target: str) -> str:
-        command = f"data get entity {target} ActiveEffects"
-        return self.rcon.command(command)
-
-
-class ShapeAlignment(Enum):
-    CENTER = auto()
-    TOPLEFT = auto()
-    TOPRIGHT = auto()
-    BOTTOMLEFT = auto()
-    BOTTOMRIGHT = auto()
-    TOP = auto()
-    BOTTOM = auto()
-    LEFT = auto()
-    RIGHT = auto()
-
-
-class Shape(ABC):
-    def __init__(self, mc: MinecraftController, pos: IntPosition, alignment: ShapeAlignment = ShapeAlignment.CENTER):
-        self.mc = mc
-        self.pos = pos
-        self.alignment = alignment
-
-    @property
-    @abstractmethod
-    def center(self) -> IntPosition:
-        pass
-
-    @property
-    @abstractmethod
-    def size(self) -> Tuple[int, int, int]:
-        pass
-
-    @property
-    def left(self) -> int:
-        return self.center.x - self.size[0] // 2
-
-    @property
-    def right(self) -> int:
-        return self.center.x + self.size[0] // 2
-
-    @property
-    def top(self) -> int:
-        return self.center.y + self.size[1] // 2
-
-    @property
-    def bottom(self) -> int:
-        return self.center.y - self.size[1] // 2
-
-    @property
-    def front(self) -> int:
-        return self.center.z - self.size[2] // 2
-
-    @property
-    def back(self) -> int:
-        return self.center.z + self.size[2] // 2
-
-    @abstractmethod
-    def get_blocks(self) -> List[Tuple[IntPosition, Block]]:
-        pass
-
-    def place(self):
-        for pos, block in self.get_blocks():
-            self.mc.setblock(block, pos)
-
-    def clear(self):
-        for pos, _ in self.get_blocks():
-            self.mc.setblock(Block(id=identifier(name="air")), pos)
-
-
-class Cube(Shape):
-    def __init__(self, mc: MinecraftController, pos: IntPosition, size: Tuple[int, int, int], block: Block, alignment: ShapeAlignment = ShapeAlignment.CENTER):
-        super().__init__(mc, pos, alignment)
-        self._size = size
-        self.block = block
-        self._calculate_center()
-
-    def _calculate_center(self):
-        if self.alignment == ShapeAlignment.CENTER:
-            self._center = self.pos
-        elif self.alignment == ShapeAlignment.TOPLEFT:
-            self._center = IntPosition(
-                x=self.pos.x + self._size[0] // 2,
-                y=self.pos.y - self._size[1] // 2,
-                z=self.pos.z + self._size[2] // 2
-            )
-        elif self.alignment == ShapeAlignment.BOTTOM:
-            self._center = IntPosition(
-                x=self.pos.x,
-                y=self.pos.y + self._size[1] // 2,
-                z=self.pos.z
-            )
-        # その他のアライメントケースも同様に実装
-
-    @property
-    def center(self) -> IntPosition:
-        return self._center
-
-    @property
-    def size(self) -> Tuple[int, int, int]:
-        return self._size
-
-    def get_blocks(self) -> List[Tuple[IntPosition, Block]]:
-        blocks = []
-        for x in range(self.left, self.right + 1):
-            for y in range(self.bottom, self.top + 1):
-                for z in range(self.front, self.back + 1):
-                    blocks.append((IntPosition(x=x, y=y, z=z), self.block))
-        return blocks
-
-    def place(self):
-        max_fill_size = 32
-        segments_x = (self.size[0] - 1) // max_fill_size + 1
-        segments_y = (self.size[1] - 1) // max_fill_size + 1
-        segments_z = (self.size[2] - 1) // max_fill_size + 1
-
-        for sx in range(segments_x):
-            for sy in range(segments_y):
-                for sz in range(segments_z):
-                    start_x = self.left + sx * max_fill_size
-                    start_y = self.bottom + sy * max_fill_size
-                    start_z = self.front + sz * max_fill_size
-
-                    end_x = min(start_x + max_fill_size - 1, self.right)
-                    end_y = min(start_y + max_fill_size - 1, self.top)
-                    end_z = min(start_z + max_fill_size - 1, self.back)
-
-                    self.mc.rcon.command(f"fill {start_x} {start_y} {start_z} {
-                                         end_x} {end_y} {end_z} {self.block} replace")
-
-    def clear(self):
-        max_fill_size = 32
-        segments_x = (self.size[0] - 1) // max_fill_size + 1
-        segments_y = (self.size[1] - 1) // max_fill_size + 1
-        segments_z = (self.size[2] - 1) // max_fill_size + 1
-
-        for sx in range(segments_x):
-            for sy in range(segments_y):
-                for sz in range(segments_z):
-                    start_x = self.left + sx * max_fill_size
-                    start_y = self.bottom + sy * max_fill_size
-                    start_z = self.front + sz * max_fill_size
-
-                    end_x = min(start_x + max_fill_size - 1, self.right)
-                    end_y = min(start_y + max_fill_size - 1, self.top)
-                    end_z = min(start_z + max_fill_size - 1, self.back)
-
-                    self.mc.rcon.command(f"fill {start_x} {start_y} {start_z} {
-                                         end_x} {end_y} {end_z} air replace")
-
-
-class Sphere(Shape):
-    def __init__(self, mc: MinecraftController, pos: IntPosition, radius: int, block: Block, alignment: ShapeAlignment = ShapeAlignment.CENTER):
-        super().__init__(mc, pos, alignment)
-        self.radius = radius
-        self.block = block
-        self._calculate_center()
-
-    def _calculate_center(self):
-        if self.alignment == ShapeAlignment.CENTER:
-            self._center = self.pos
-        elif self.alignment == ShapeAlignment.TOPLEFT:
-            self._center = IntPosition(
-                x=self.pos.x + self.radius,
-                y=self.pos.y - self.radius,
-                z=self.pos.z + self.radius
-            )
-        # その他のアライメントケースも同様に実装
-
-    @property
-    def center(self) -> IntPosition:
-        return self._center
-
-    @property
-    def size(self) -> Tuple[int, int, int]:
-        diameter = self.radius * 2 + 1
-        return (diameter, diameter, diameter)
-
-    def get_blocks(self) -> List[Tuple[IntPosition, Block]]:
-        blocks = []
-        for x in range(self.left, self.right + 1):
-            for y in range(self.bottom, self.top + 1):
-                for z in range(self.front, self.back + 1):
-                    if (x - self.center.x) ** 2 + (y - self.center.y) ** 2 + (z - self.center.z) ** 2 <= self.radius ** 2:
-                        blocks.append((IntPosition(x=x, y=y, z=z), self.block))
-        return blocks
-
-    def place(self):
-        for pos, _ in self.get_blocks():
-            self.mc.setblock(self.block, pos)
-
-    def clear(self):
-        air_block = Block(id=identifier(name="air"))
-        for pos, _ in self.get_blocks():
-            self.mc.setblock(air_block, pos)
+    def execute(self, command: Command):
+        return self.rcon.command(str(command))
+
+    def execute_commands(self, commands: Command.Commands):
+        return [self.execute(cmd) for cmd in commands]
 
 
 if __name__ == "__main__":
-    # プロジェクトのルートディレクトリをPythonパスに追加
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import os
+    import sys
+    sys.path.append(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
     from Dungeon.DungeonMaker import Analyzer
+    from NBT.MBlocks import MBlocks
+    from NBT.parameter import IntPosition, identifier
+    from NBT.block_nbt import Block
+    from MShape.MShape import Cube, Plane
+
     with MinecraftController("MinecraftServer/server.properties") as mc:
         image_size = 100
-        
-        # プレイヤーの現在位置を取得
-        player_pos = mc.get_position("@p")
 
-        # プレイヤーの周囲をクリア
-        mc.fill_centered(player_pos,
-                         image_size*2, image_size*2,
-                         30, 0,
-                         image_size*2, image_size*2,
-                         Block(id=identifier(name="air")))
-
-        # 地面を作成
-        mc.fill_centered(player_pos,
-                         image_size*2, image_size*2,
-                         -1, 1,
-                         image_size*2, image_size*2,
-                         Block(id=identifier(name="grass_block")))
-        
-        # 画像を作成する位置を設定
-        image_pos = IntPosition(x=player_pos.x - image_size//2,
-                                y=player_pos.y, z=player_pos.z - image_size//2)
-
-        # 画像を作成
-        mc.create_image(
-            image_path="kazehaya.jpg",  # 画像ファイルのパスを指定
-            start_pos=image_pos,
-            width=image_size,  # 画像の幅（ブロック数）
-            facing='south',  # 画像の向き
-            orientation='horizontal',  # 画像の配置方向
-            item_hold=True  # プレイヤーのホットバーに使用したブロックを配置
+        mc.print_command_result = True
+        bs_cmd = BaseSettings(
+            target=Target(SelectorType.NEAREST_PLAYER),
+            game_mode=GameMode.CREATIVE,
+            difficulty=Difficulty.PEACEFUL,
+            clear_items=True
         )
+        print(bs_cmd(mc))
 
-        print(f"Image created at {image_pos}")
+        get_pos_cmd = GetPosition(target=Target(SelectorType.NEAREST_PLAYER))
+        # プレイヤーの現在位置を取得
+        player_pos = get_pos_cmd(mc)
+        print(player_pos)
+        get_rot_cmd = GetRotation(Target(SelectorType.NEAREST_PLAYER))
+        player_rot = get_rot_cmd(mc)
+        print(player_rot)
 
-        # プレイヤーを画像の前にテレポート
-        teleport_pos = IntPosition(
-            x=player_pos.x, y=player_pos.y, z=image_pos.z - 5)
-        mc.tp("@p", teleport_pos)
+        sf_cmd = SuperFlat(
+            player_pos,
+            IntPosition(image_size,0,image_size),
+            layers=[
+                (image_size, Block(MBlocks.air)),
+                (1, Block(MBlocks.grass_block)),
+                (2, Block(MBlocks.dirt)),
+                (1, Block(MBlocks.bedrock))
+            ],
+            start_point=SuperFlat.LayerStartPoint(1,SuperFlat.LayerReference.TOP)
+        )
+        sf_cmd(mc)
+        """
+        imc_cmd = ImageCreator(
+            image_path="ch_img_miku.png",
+            start_pos=player_pos,
+            width=60,
+            _rotation=(0,0,-90)
+        )
+        print(imc_cmd(mc))
+        """
 
-        # 画像を見るためのエフェクトを付与
-        mc.apply_effect("@p", "minecraft:night_vision 60 1")
+        effect_cmd = Command.Effect(
+            Command.Effect.Operation.GIVE,
+            targets=Target(SelectorType.NEAREST_PLAYER),
+            effect=EffectType.ABSORPTION,
+            duration=Seconds(20),
+            amplifier=2,
+            hide_particles=False
+        )
+        effect_cmd(mc)
+        cube = Cube(initial_position=player_pos+IntPosition(0,10,0),size=6, block=MBlocks.stone)
+        cube.place()(mc)
+        cube.rotate_axis((0,1,0),45)
+        cube.rotate_axis((0,0,1),45)
+        cube.translate(IntPosition(10,0,0))
+        cube.place()(mc)
 
-        print("Player teleported and given night vision effect.")
+        agent = AgentCommander(
+            player_pos,
+            player_rot.to_cardinal(),
+            Target(SelectorType.NEAREST_PLAYER)
+        )
+        agent.forward(1).place(MBlocks.stone_pressure_plate)
+        agent.forward(1).place(MBlocks.redstone_wire)
+        agent.forward(1).place((MBlocks.gold_block,Command.SetDirection(up=-1))).place(MBlocks.note_block)
+        agent.forward(1).place(RedstoneRepeater.create(delay=2))
+        print(agent(mc))
+        agent.forward()
+        agent.forward()
+        
+        def set_sounds(total_delay:int, sounds: list[tuple[MBlocks,int]]):
 
+            def set_sound_blocks(delay:int,last_skip:bool=False):
+                if len(sounds) == 0:
+                    return False
+                agent.forward()
+                agent.place(MBlocks.stone).place((RedstoneRepeater.create(delay=delay),Command.SetDirection(up=1)))
+                agent.forward()
+                s, t = sounds.pop()
+                agent.place(s).place((NoteBlock(NoteBlockState(note=t)),Command.SetDirection(up=1)))
+                agent.left()
+                if len(sounds) == 0:
+                    return False
+                s, t = sounds.pop()
+                agent.place(s).place((NoteBlock(NoteBlockState(note=t)),Command.SetDirection(up=1)))
+                agent.right(2)
+                if not last_skip:
+                    if len(sounds) == 0:
+                        return False
+                    s, t = sounds.pop()
+                    agent.place(s).place((NoteBlock(NoteBlockState(note=t)),Command.SetDirection(up=1)))
+                agent.left().back(2)
+                return True
+
+            def setting_sound_blocks(delay:int,last_skip:bool=False):
+                if set_sound_blocks(delay):
+                    agent.turn_left()
+                    if set_sound_blocks(delay):
+                        agent.turn_right(2)
+                        if set_sound_blocks(delay,last_skip):
+                            agent.turn_left()
+                            return True
+                return False
+
+            def set_additional_sound_blocks(delay:int):
+                if len(sounds) == 0:
+                    return False
+                agent.up()
+                slab = Slab(block_state=SlabState(SlabType.TOP))
+                agent.up().place(MBlocks.redstone_wire)
+                agent.up().place(slab).down()
+                agent.turn_left().forward()
+                agent.place(slab).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
+                if setting_sound_blocks(delay,True):
+                    agent.back().turn_left(2).forward()
+                    agent.place(slab).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
+                    if setting_sound_blocks(delay,True):
+                        agent.back().turn_left()
+                        return True
+                return False
+            
+            start_len = 3
+            if total_delay == 0:
+                total_delay = 20
+            if total_delay > 4:
+                for _ in range(total_delay//4):
+                    agent.place(MBlocks.stone).place((RedstoneRepeater.create(delay=4),Command.SetDirection(up=1)))
+                    agent.forward()
+                    start_len -= 1
+                if total_delay % 4 == 0:
+                    delay = 4
+                else:
+                    delay = total_delay % 4
+            else:
+                delay = total_delay
+            
+            print(delay)
+            if start_len > 0:
+                for _ in range(start_len):
+                    agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
+                    agent.forward()
+            agent.up()
+            agent.place(MBlocks.stone)
+            agent.down().memory_condition()
+            success = setting_sound_blocks(delay)
+            while success:
+                success = set_additional_sound_blocks(delay)
+            agent.comeback()
+            agent.forward(3)
+        
+        """
+        
+        # テスト用
+        sound_groups = [
+            [random.randint(1,20), random.choices([(MBlocks.emerald_block,10),
+                (MBlocks.stone,3),
+                (MBlocks.diamond_block,23)],k=random.randint(1,40))] for _ in range(20)]
+        """
+        max_length = 10
+        next_col_len = 9
+        sound_groups = convert_midi_to_grouped_noteblocks("Liszt_lacampanella.mid",100,1/0.7)
+        cols = np.ceil(len(sound_groups) / max_length)
+        col_length = (cols - 1) * (next_col_len-1)
+        print(f"col length: {col_length}")
+        agent.right(col_length//2)
+        agent.memory_condition()
+        start_pos = agent.pos
+        for c in range(int(cols//2)+2):
+            Command.Tp(Target(SelectorType.NEAREST_PLAYER),agent.pos)(mc)
+            sf_cmd = SuperFlat(
+                agent.pos,
+                IntPosition(max_length*10,0,max_length*10),
+                layers=[
+                    (20, Block(MBlocks.air)),
+                    (1, Block(MBlocks.grass_block)),
+                    (2, Block(MBlocks.dirt)),
+                    (1, Block(MBlocks.bedrock))
+                ],
+                start_point=SuperFlat.LayerStartPoint(1,SuperFlat.LayerReference.TOP)
+            )
+            sf_cmd(mc)
+            agent.left(next_col_len*2)
+        agent.comeback()
+        do_place = True
+        if do_place:
+            for i, (total_delay, sounds) in enumerate(sound_groups,1):
+                set_sounds(total_delay, sounds)
+                if i % max_length == 0:
+                    Command.Tp(Target(SelectorType.NEAREST_PLAYER),agent.pos)(mc)
+                    if (i // max_length) % 2 == 0:
+                        agent.turn_right()
+                    else:
+                        agent.turn_left()
+                    for _ in range(next_col_len-1):
+                        agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
+                        agent.forward()
+                    if (i // max_length) % 2 == 0:
+                        agent.turn_right()
+                    else:
+                        agent.turn_left()
+                    agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
+                    agent.forward()
+                #print(agent.commands)
+                agent(mc)
+        Command.Tp(Target(SelectorType.NEAREST_PLAYER),start_pos)(mc)
+        """
+        
+        monster_id = "magma_cube"
         # プレイヤーの位置から少し離れた場所に迷路を生成
         maze_start_pos = IntPosition(
             x=player_pos.x + image_size//2 + 10, y=player_pos.y, z=player_pos.z)
@@ -607,33 +295,18 @@ if __name__ == "__main__":
         maze, labels, start_goal_candidates = Analyzer.create_maze(
             (30, 30), 50)
 
-        # 迷路の基本ブロック
-        base_block = Block(id=identifier(name="bedrock"))
-
         # 迷路の3D配列を作成
-        m_maze = [[base_block] * (2 + maze.shape[1])]
-        for i in range(maze.shape[0]):
-            i_maze = [base_block]
-            for j in range(maze.shape[1]):
-                if maze[i, j] == 0:
-                    i_maze.append(Block(id=identifier(name="air")))
-                else:
-                    i_maze.append(base_block)
-            m_maze.append(i_maze + [base_block])
-        m_maze.append([base_block] * (2 + maze.shape[1]))
-        m_maze = np.tile(np.expand_dims(np.array(m_maze), 1), (1, 3, 1))
+        maze_block_map = [
+            MBlocks.air,
+            MBlocks.bedrock
+        ]
+        m_maze = np.tile(np.expand_dims(np.pad(np.array(maze, dtype=np.int64), ((
+            1, 1), (1, 1)), 'constant', constant_values=1), 1), (1, 3, 1))
+        m_maze_floor = np.ones_like(m_maze)[:,[0],:]
+        m_maze = np.concatenate([m_maze_floor,m_maze],axis=1)
 
         # 迷路の配置
-        mc.setblocks(maze_start_pos, m_maze)
-
-        # 迷路の床を設置
-        mc.fill(
-            IntPosition(x=maze_start_pos.x, y=maze_start_pos.y -
-                        1, z=maze_start_pos.z),
-            IntPosition(x=maze_start_pos.x +
-                        maze.shape[0] + 1, y=maze_start_pos.y - 1, z=maze_start_pos.z + maze.shape[1] + 1),
-            Block(id=identifier(name="bedrock"))
-        )
+        mc.setblocks(maze_start_pos-IntPosition(0,1,0), m_maze, maze_block_map)
 
         # スタートとゴールの設定
         region = random.choice(list(start_goal_candidates.keys()))
@@ -641,10 +314,50 @@ if __name__ == "__main__":
         goal_pos = random.choice(start_goal_candidates[region][1])
 
         # ゴールの設置
-        mc.setblock(
-            Block(id=identifier(name="gold_block")),
-            IntPosition(x=maze_start_pos.x +
+        goal_m_pos = IntPosition(x=maze_start_pos.x +
                         goal_pos[0] + 1, y=maze_start_pos.y, z=maze_start_pos.z + goal_pos[1] + 1)
+        mc.give(
+            Target(selector=SelectorType.NEAREST_PLAYER),
+            Compass(item_state=CompassState(
+                lodestone_tracker=CompassTag(
+                    LodestoneTracked=boolean(True),
+                    LodestoneDimension=dimension.OVERWORLD,
+                    LodestonePos=goal_m_pos
+                )))
+        )
+        mc.setblock(
+            MBlocks.lodestone,
+            goal_m_pos
+        )
+        mc.setblock(
+            MBlocks.heavy_weighted_pressure_plate,
+            goal_m_pos + IntPosition(0,1,0)
+        )
+        mc.setblock(
+            CommandBlock(
+                tags=CommandBlockTag(Command=mc.setblock(
+                        MBlocks.redstone_block,
+                        goal_m_pos + IntPosition(0,-2,0),
+                        execute=False
+                    ), auto=boolean(_value=False))
+            ),
+            goal_m_pos + IntPosition(0,-1,0)
+        )
+        mc.setblock(
+            CommandBlock(
+                tags=CommandBlockTag(Command="gamemode creative @p", auto=boolean(_value=False))
+            ),
+            goal_m_pos + IntPosition(1,-2,0)
+        )
+        mc.setblock(
+            CommandBlock(
+                tags=CommandBlockTag(Command=mc.setblock(
+                        MBlocks.air,
+                        goal_m_pos + IntPosition(0,-2,0),
+                        execute=False
+                    ), auto=boolean(_value=False))
+            ),
+            goal_m_pos + IntPosition(2,-2,0)
         )
 
         # プレイヤーをスタート地点にテレポート
@@ -657,3 +370,44 @@ if __name__ == "__main__":
         print(f"Maze generated at {maze_start_pos}")
         print(f"Player teleported to start position: {start_pos}")
         print(f"Goal position: {goal_pos}")
+        mc.command("difficulty normal")
+
+        # 敵の生成
+        region_mask = labels==region
+        walkable_positions = np.argwhere(region_mask)
+        distances = np.sum(np.abs(walkable_positions-start_pos),axis=-1) > 2
+        if np.sum(distances) > 0:
+            walkable_positions= walkable_positions[distances]
+            monster_count = 0*np.sum(distances) // 12 + 1  # 迷路の通行可能領域サイズの1/12+1体
+
+            monster_nbt = CommonMobTags(
+                Health=1000000.0,  # 実質的に無限のHP
+                attributes=Attributes(Attributes=[
+                    Attribute(Name=attribute_name.MAX_HEALTH,Base=1000000.0),
+                    Attribute(Name=attribute_name.FOLLOW_RANGE,Base=2.0),
+                    Attribute(Name=attribute_name.MOVEMENT_SPEED,Base=0.3),
+                    Attribute(Name=attribute_name.ATTACK_SPEED,Base=0.05),
+                    Attribute(Name=attribute_name.ATTACK_DAMAGE,Base=8.0),
+                    Attribute(Name=attribute_name.STEP_HEIGHT,Base=0.0),
+                    Attribute(Name=attribute_name.SCALE,Base=1.5)
+                ]),
+                NoAI=boolean(False),
+                PersistenceRequired=boolean(True),
+                tags=[
+                    NBTTag("Size",NBTType.INT,0)
+                ]
+            )
+            monster_effect = StatusEffect(id="mining_fatigue",ambient=boolean(False),amplifier=5,duration=INFINITE,show_icon=boolean(False),show_particles=boolean(True))
+            
+            for x,z in random.choices(walkable_positions,k=monster_count):
+                monster_pos = IntPosition(
+                    x=maze_start_pos.x + x + 1,
+                    y=maze_start_pos.y,
+                    z=maze_start_pos.z + z + 1
+                )
+                mc.spawn(monster_id, monster_pos, nbt=monster_nbt, effects=[monster_effect.to_command()])
+
+            print(f"Spawned {monster_count} {monster_id} in the maze")
+        mc.command(f"spawnpoint @p {player_pos.abs}")    
+        mc.command("gamemode survival @p")
+        """

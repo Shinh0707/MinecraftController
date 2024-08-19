@@ -2,37 +2,42 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Union
 from enum import Enum
 from dataclasses import dataclass, field
-from nbt import NBTCompound, NBTList, NBTTag, NBTType, UUID
-from NBT.parameter import block_predicate, attribute_name, boolean, dimension, IntPosition, identifier
+from NBT.nbt import NBTCompound, NBTList, NBTTag, NBTType, UUID
+from NBT.parameter import block_predicate, attribute_name, boolean, dimension, IntPosition, identifier, rotation
 
 @dataclass
 class StatusEffect(NBTCompound):
+    name: str = field(default="", init=False)
+    tags: list[NBTTag] = field(default_factory=list, init=False)
     id: str = field(default="")
-    ambient: bool = field(default=False, compare=False)
+    ambient: boolean = field(default_factory=boolean(_value=False), compare=False)
     amplifier: int = field(default=0, compare=False)
     duration: int = field(default=0, compare=False)
-    show_icon: bool = field(default=True, compare=False)
-    show_particles: bool = field(default=True, compare=False)
+    show_icon: boolean = field(default_factory=boolean(_value=True), compare=False)
+    show_particles: boolean = field(default_factory=boolean(_value=True), compare=False)
     hidden_effect: Optional[StatusEffect] = field(default=None, compare=False)
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = [
             NBTTag("id", NBTType.STRING, self.id),
-            NBTTag("ambient", NBTType.BYTE, self.ambient),
-            NBTTag("amplifier", NBTType.BYTE, self.amplifier),
+            self.ambient.to_nbt_tag("ambient"),
+            NBTTag("amplifier", NBTType.INT, self.amplifier),
             NBTTag("duration", NBTType.INT, self.duration),
-            NBTTag("show_icon", NBTType.BYTE, self.show_icon),
-            NBTTag("show_particles", NBTType.BYTE, self.show_particles)
+            self.show_icon.to_nbt_tag("show_icon"),
+            self.show_particles.to_nbt_tag("show_particles")
         ]
         if self.hidden_effect:
             tags.append(self.hidden_effect)
-        return tags
+        self.value = tags
+
+    def to_command(self):
+        return f"{self.id} {self.duration} {self.amplifier} {self.show_particles}"
 
 
 @dataclass
 class ActiveEffects(NBTList):
-    effects: list[StatusEffect] = []
+    
+    effects: list[StatusEffect] = field(default_factory=[])
 
     def add_effect(self, effect: StatusEffect, replace: bool = True):
         if effect in self.effects:
@@ -45,9 +50,8 @@ class ActiveEffects(NBTList):
         for effect in effects:
             self.add_effect(effect, replace)
 
-    @property
-    def value(self):
-        return self.effects
+    def __post_init__(self):
+        self.value = self.effects
 
 
 @dataclass
@@ -57,9 +61,8 @@ class ArmorDropChances(NBTList):
     chest: float = 0.0
     head: float = 0.0
 
-    @property
-    def value(self):
-        return [
+    def __post_init__(self):
+        self.value = [
             NBTTag('', NBTType.FLOAT, self.feet),
             NBTTag('', NBTType.FLOAT, self.legs),
             NBTTag('', NBTType.FLOAT, self.chest),
@@ -74,8 +77,7 @@ class CommonItemTags(NBTCompound):
     id: Optional[str] = None
     tag: Optional[NBTCompound] = None
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = [
             NBTTag("Count", NBTType.BYTE, self.Count)
         ]
@@ -85,7 +87,7 @@ class CommonItemTags(NBTCompound):
             tags.append(NBTTag("id", NBTType.STRING, self.id))
         if self.tag:
             tags.append(NBTTag("tag", NBTType.COMPOUND, self.tag))
-        return tags
+        self.value = tags
 
 
 @dataclass
@@ -107,8 +109,7 @@ class ArmorItems(NBTList):
     chest: Optional[CommonItemTags] = None
     head: Optional[CommonItemTags] = None
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = []
         if self.feet:
             tags.append(self.feet)
@@ -126,7 +127,7 @@ class ArmorItems(NBTList):
             tags.append(self.head)
         else:
             tags.append(NBTCompound())
-        return tags
+        self.value = tags
 
 class EquipSlot(Enum):
     MAINHAND = "mainhand"
@@ -155,10 +156,9 @@ class AttributeModifier(NBTCompound):
     Slot: EquipSlot = EquipSlot.MAINHAND
     Operation: AttributeModifierOperation = AttributeModifierOperation.ADD
     Amount: float = 0.0
-    UUID: UUID = field(default=UUID.random(False))
+    UUID: UUID = field(default_factory=UUID.random(False))
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = [
             self.AttributeName.to_nbt_tag(),
             NBTTag("Name", NBTType.STRING, self.Name),
@@ -167,20 +167,21 @@ class AttributeModifier(NBTCompound):
             NBTTag("Amount", NBTType.DOUBLE, self.Amount),
             self.UUID
         ]
-        return tags
+        self.value = tags
 
 
 @dataclass
 class Attribute(NBTCompound):
-    Base: float = 0.0
+    name: str = field(default="",init=False)
+    tags: list[NBTTag] = field(default=list,init=False)
     Name: attribute_name = field(default=attribute_name.MAX_HEALTH)
+    Base: float = 0.0
     Modifiers: Optional[list[AttributeModifier]] = None
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = [
-            NBTTag("Base", NBTType.DOUBLE, self.Base),
-            self.Name.to_nbt_tag("Name")
+            self.Name.to_nbt_tag("id"),
+            NBTTag("base", NBTType.DOUBLE, self.Base)
         ]
         if self.Modifiers:
             modifiers = []
@@ -188,34 +189,36 @@ class Attribute(NBTCompound):
                 mod.AttributeName = self.Name
                 modifiers.append(mod)
             tags.append(NBTTag("Modifiers", NBTType.LIST, modifiers))
-        return tags
+        self.value = tags
 
 @dataclass
 class DimensionPosition(NBTCompound):
-    dimension: dimension
-    pos: IntPosition
+    dimension: dimension = dimension.OVERWORLD
+    pos: IntPosition = field(default_factory=IntPosition(0,0,0))
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = [
             self.dimension.to_nbt_tag(),
             self.pos
         ]
-        return tags
+        self.value = tags
 
 @dataclass
 class BrainMemory(NBTCompound):
-    _value: Union[int,list[int],NBTCompound,bool]
+    _value: Union[int,list[int],NBTCompound,bool] = 0
     ttl: Optional[int] = None
 
-    @property
-    def value(self):
+    def __post_init__(self):
         tags = [
             NBTTag.create_nbt_tag("value", self._value)
         ]
         if self.ttl:
             tags.append(NBTTag("ttl", NBTType.LONG, self.ttl))
-        return tags
+        self.tags = tags
+        self.value = tags
+    
+    def __call__(self):
+        return self
 
 class Memories(Enum):
     ADMIRING_DISABLED = BrainMemory(_value=False, ttl=0)
@@ -240,19 +243,17 @@ class Memories(Enum):
 
 @dataclass
 class Brain(NBTCompound):
-    memories: Memories
+    memories: Memories = field(default=None)
 
-    @property
-    def value(self):
-        return self.memories
+    def __post_init__(self):
+        self.value = self.memories
 
 @dataclass
 class Attributes(NBTList):
-    Attributes: list[Attribute]
+    Attributes: list[Attribute] = field(default=None)
 
-    @property
-    def value(self):
-        return self.Attributes
+    def __post_init__(self):
+        self.value = self.Attributes
 
 
 @dataclass
@@ -260,9 +261,8 @@ class HandDropChances(NBTList):
     main_hand: float = 0.085
     off_hand: float = 0.085
 
-    @property
-    def value(self):
-        return [
+    def __post_init__(self):
+        self.value = [
             NBTTag('', NBTType.FLOAT, self.main_hand),
             NBTTag('', NBTType.FLOAT, self.off_hand)
         ]
@@ -273,8 +273,7 @@ class HandItems(NBTList):
     main_hand: Optional[CommonItemTags] = None
     off_hand: Optional[CommonItemTags] = None
 
-    @property
-    def value(self):
+    def __post_init__(self):
         items = []
         if self.main_hand:
             items.append(self.main_hand)
@@ -284,27 +283,25 @@ class HandItems(NBTList):
             items.append(self.off_hand)
         else:
             items.append(NBTCompound())
-        return items
+        self.value = items
 
 
 @dataclass
 class LeashUUID(NBTCompound):
-    UUID: UUID
+    UUID: UUID = field(default_factory=UUID.random(True))
 
-    @property
-    def value(self):
-        return [self.UUID]
+    def __post_init__(self):
+        self.value = [self.UUID]
 
 
 @dataclass
 class LeashPosition(NBTCompound):
-    X: int
-    Y: int
-    Z: int
+    X: int = 0
+    Y: int = 0
+    Z: int = 0
 
-    @property
-    def value(self):
-        return [
+    def __post_init__(self):
+        self.value = [
             NBTTag('X', NBTType.INT, self.X),
             NBTTag('Y', NBTType.INT, self.Y),
             NBTTag('Z', NBTType.INT, self.Z)
@@ -313,11 +310,25 @@ class LeashPosition(NBTCompound):
 
 @dataclass
 class Leash(NBTCompound):
-    data: Union[LeashUUID, LeashPosition]
+    data: Union[LeashUUID, LeashPosition] = field(default=None)
 
-    @property
-    def value(self):
-        return self.data.value
+    def __post_init__(self):
+        if self.data:
+            self.value = self.data.value
+        else:
+            self.value = None
+
+"""
+@dataclass
+class CommonEntityTags(NBTCompound):
+    id: Optional[identifier] = None
+    Pos: Optional[IntPosition] = None
+    Motion: Optional[tuple[float,float,float]] = None
+    Rotation: Optional[tuple[float,float]] = None
+    FallDistance: Optional[float] = None
+    Fire: Optional[float] = None
+    Air: Optional[int] = None
+"""
 
 
 @dataclass
@@ -326,7 +337,7 @@ class CommonMobTags(NBTCompound):
     ActiveEffects: Optional[ActiveEffects] = None
     ArmorDropChances: Optional[ArmorDropChances] = None
     ArmorItems: Optional[ArmorItems] = None
-    Attributes: Optional[Attributes] = None
+    attributes: Optional[Attributes] = None
     Brain: Optional[Brain] = None
     CanPickUpLoot: Optional[boolean] = None
     DeathLootTable: Optional[identifier] = None
@@ -346,26 +357,25 @@ class CommonMobTags(NBTCompound):
     SleepingY: Optional[int] = None
     SleepingZ: Optional[int] = None
     Team: Optional[str] = None
+    tags: Optional[list[NBTTag]] = field(default_factory=list)
 
-    @property
-    def value(self):
-        tags = []
+    def __post_init__(self):
         for field, value in self.__dict__.items():
             if value is not None:
                 if field == 'AbsorptionAmount':
-                    tags.append(NBTTag(field, NBTType.FLOAT, value))
-                elif field in ['ActiveEffects', 'ArmorDropChances', 'ArmorItems', 'Attributes', 'Brain', 'HandDropChances', 'HandItems', 'Leash']:
-                    tags.append(NBTTag(field, NBTType.COMPOUND, value))
+                    self.tags.append(NBTTag(field, NBTType.FLOAT, value))
+                elif field in ['ActiveEffects', 'ArmorDropChances', 'ArmorItems', 'attributes', 'Brain', 'HandDropChances', 'HandItems', 'Leash']:
+                    self.tags.append(NBTTag(field, NBTType.COMPOUND, value))
                 elif field in ['CanPickUpLoot', 'FallFlying', 'LeftHanded', 'NoAI', 'PersistenceRequired']:
-                    tags.append(NBTTag(field, NBTType.BYTE, int(value)))
+                    assert isinstance(value,boolean)
+                    self.tags.append(value)
                 elif field == 'DeathLootTable':
                     assert isinstance(value,identifier)
-                    tags.append(value.to_nbt_tag(field))
+                    self.tags.append(value.to_nbt_tag(field))
                 elif field in ['DeathLootTableSeed', 'DeathTime', 'HurtByTimestamp', 'HurtTime', 'SleepingX', 'SleepingY', 'SleepingZ']:
-                    tags.append(NBTTag(field, NBTType.INT, value))
+                    self.tags.append(NBTTag(field, NBTType.INT, value))
                 elif field == 'Health':
-                    tags.append(NBTTag(field, NBTType.FLOAT, value))
+                    self.tags.append(NBTTag(field, NBTType.FLOAT, value))
                 elif field == 'Team':
-                    tags.append(NBTTag(field, NBTType.STRING, value))
-
-        return tags
+                    self.tags.append(NBTTag(field, NBTType.STRING, value))
+        self.value = self.tags

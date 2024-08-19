@@ -2,13 +2,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Union, List
+from Helper.helpers import ValuedEnum
 from NBT.nbt import NBTCompound
 
 # 既存のクラスをインポート（実際のインポート文は省略）
-from NBT.parameter import angle, rotation, facing, boolean, identifier, block_states, block_predicate
+from NBT.parameter import IntPosition, angle, rotation, facing, boolean, identifier, block_states, block_predicate
 
-
-class SelectorType(Enum):
+class SelectorType(ValuedEnum):
     NEAREST_PLAYER = "@p"
     RANDOM_PLAYER = "@r"
     ALL_PLAYERS = "@a"
@@ -16,26 +16,23 @@ class SelectorType(Enum):
     EXECUTOR = "@s"
 
 
-class GameMode(Enum):
+class GameMode(ValuedEnum):
     SURVIVAL = "survival"
     CREATIVE = "creative"
     ADVENTURE = "adventure"
     SPECTATOR = "spectator"
 
+class Difficulty(ValuedEnum):
+    PEACEFUL = "peaceful"
+    EASY = "easy"
+    NORMAL = "normal"
+    HARD = "hard"
 
-class SortMethod(Enum):
+class SortMethod(ValuedEnum):
     NEAREST = "nearest"
     FURTHEST = "furthest"
     RANDOM = "random"
     ARBITRARY = "arbitrary"
-
-
-@dataclass
-class Position:
-    x: float
-    y: float
-    z: float
-
 
 @dataclass
 class Range:
@@ -56,7 +53,7 @@ class Range:
 @dataclass
 class Target:
     selector: SelectorType
-    position: Optional[Position] = None
+    position: Optional[IntPosition] = None
     distance: Optional[Range] = None
     volume: Optional[tuple[float, float, float]] = None
     scores: Dict[str, Range] = field(default_factory=dict)
@@ -69,7 +66,7 @@ class Target:
     name: Optional[str] = None
     x_rotation: Optional[angle] = None
     y_rotation: Optional[angle] = None
-    type: Optional[identifier] = None
+    type: Optional[Union[identifier, str]] = None
     nbt: Optional[NBTCompound] = None
     advancements: Dict[str, Union[boolean, Dict[str, boolean]]] = field(
         default_factory=dict)

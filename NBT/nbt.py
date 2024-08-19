@@ -46,14 +46,14 @@ class NBTType(Enum):
 
 @dataclass
 class NBTTag:
-    name: str
+    name: str = field(default="")
     type: NBTType = field(default=NBTType.INVALID)
     value: Any = field(default=None)
 
     def to_nbt(self) -> str:
         if self.value is None:
             return ""
-        if len(self.name) == 0:
+        if self.name is None or len(self.name) == 0:
             return NBTTag.to_nbt_str(self.value, self.type)
         return "{}:{}".format(self.name, NBTTag.to_nbt_str(self.value, self.type))
 
@@ -61,7 +61,7 @@ class NBTTag:
     def create_nbt_tag(name: str, value: Any, nbt_type: NBTType | None = None):
         if nbt_type is None:
             nbt_type = NBTType.get_nbt_type(value)
-        return NBTTag(name, value, nbt_type)
+        return NBTTag(name=name, type=nbt_type,value=value)
 
     @staticmethod
     def to_nbt_str(value: Any, nbt_type: NBTType | None = None):
@@ -110,59 +110,52 @@ class NBTTag:
         
 @dataclass
 class NBTCompound(NBTTag):
-    tags: list[NBTTag] = field(default_factory=[])
+    name: str = field(default="")
+    value: Any = field(default=None,init=False)
+    type: NBTType = field(default=NBTType.COMPOUND,init =False)
+    tags: list[NBTTag] = field(default_factory=list)
 
-    @property
-    def name(self):
-        return ""
+    def __post_init__(self):
+        self.value = self.tags
 
-    @property
-    def type(self):
-        return NBTType.COMPOUND
-
-    @property
-    def value(self):
-        return self.tags
+    def __add__(self,other):
+        if isinstance(other,NBTCompound):
+            return NBTCompound(name=self.name,tags=self.tags+other.tags)
+        if isinstance(other,NBTTag):
+            if other.type == NBTType.COMPOUND and hasattr(other,'tags') and isinstance(other.tags,list):
+                return NBTCompound(name=self.name,tags=self.tags+other.tags)
+        raise NotImplementedError
 
 
 @dataclass
 class NBTList(NBTTag):
-    
-    @property
-    def name(self):
-        name = self.__class__.__name__
-        return name
+    name: str = field(default=None)
+    value: Any = field(default=None)
+    type: NBTType = field(default=NBTType.LIST,init=False)
 
-    @property
-    def type(self):
-        return NBTType.LIST
+    def __post_init__(self):
+        if not self.name:
+            self.name = self.__class__.__name__
 
 
 @dataclass
 class UUID(NBTTag):
-    value: Union[str|list[int]]
+    name: str = field(default="UUID", init=False)
+    _value: Union[str|list[int]] = field(default=None)
     use_int_array: bool = False
 
     @classmethod
     def random(cls, use_int_array: bool=False):
         # Generate a random UUID (version 4, variant 1)
         random_uuid = uuid.uuid4()
-        return cls(str(random_uuid), use_int_array)
-
-    @property
-    def name(self) -> str:
-        return "UUID"
-
-    @property
-    def type(self) -> NBTType:
-        return NBTType.LIST if self.use_int_array else NBTType.STRING
+        return cls(_value=str(random_uuid), use_int_array=use_int_array)
 
     def to_nbt(self) -> str:
         if self.use_int_array:
-            int_array = self._uuid_to_int_array(self.value)
+            int_array = self._uuid_to_int_array(self._value)
             return f"UUID:[I;{','.join(map(str, int_array))}]"
         else:
-            return f'UUID:"{self.value}"'
+            return f'UUID:"{self._value}"'
 
     @staticmethod
     def _uuid_to_int_array(uuid_str: str) -> list[int]:
@@ -191,15 +184,17 @@ class UUID(NBTTag):
         return "-".join(uuid_parts)
 
     def __post_init__(self):
-        if isinstance(self.value, list):
+        if isinstance(self._value, list):
             self.use_int_array = True
-            self.value = self._int_array_to_uuid(self.value)
-        elif not isinstance(self.value, str):
+            self._value = self._int_array_to_uuid(self._value)
+        elif not isinstance(self._value, str):
             raise ValueError(
                 "UUID value must be either a string or a list of integers")
+        self.type = NBTType.LIST if self.use_int_array else NBTType.STRING
+        self.value = self._value
 
     def to_int_array(self) -> list[int]:
-        return self._uuid_to_int_array(self.value)
+        return self._uuid_to_int_array(self._value)
 
     def to_string(self) -> str:
-        return self.value
+        return self._value

@@ -1,0 +1,11 @@
+# Ignore mid, png, jpg, and bat files
+*.mid
+*.png
+*.jpg
+*.bat
+
+# Ignore MinecraftServer directory
+MinecraftServer/
+
+# Ignore test[number].py files
+test[0-9]*.py
