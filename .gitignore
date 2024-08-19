@@ -7,6 +7,8 @@
 # Ignore MinecraftServer directory
 MinecraftServer/
 minecraft_block_seacher/
+.vs/
+Resources/
 
 # Ignore test[number].py files
 test[0-9]*.py
