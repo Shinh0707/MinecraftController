@@ -78,7 +78,7 @@ if __name__ == "__main__":
     from MShape.MShape import Cube, Plane
 
     with MinecraftController("MinecraftServer/server.properties") as mc:
-        image_size = 10
+        image_size = 200
 
         mc.print_command_result = True
         bs_cmd = BaseSettings(
@@ -109,16 +109,6 @@ if __name__ == "__main__":
             start_point=SuperFlat.LayerStartPoint(1,SuperFlat.LayerReference.TOP)
         )
         sf_cmd(mc)
-        """
-        imc_cmd = ImageCreator(
-            image_path="ch_img_miku.png",
-            start_pos=player_pos,
-            width=60,
-            _rotation=(0,0,-90)
-        )
-        print(imc_cmd(mc))
-        """
-
         effect_cmd = Command.Effect(
             Command.Effect.Operation.GIVE,
             targets=Target(SelectorType.NEAREST_PLAYER),
@@ -128,23 +118,27 @@ if __name__ == "__main__":
             hide_particles=False
         )
         effect_cmd(mc)
+        """
         cube = Cube(initial_position=player_pos+IntPosition(0,10,0),size=6, block=MBlocks.stone)
         cube.place()(mc)
         cube.rotate_axis((0,1,0),45)
         cube.rotate_axis((0,0,1),45)
         cube.translate(IntPosition(10,0,0))
         cube.place()(mc)
+        """
 
         agent = AgentCommander(
             player_pos,
             player_rot.to_cardinal(),
             Target(SelectorType.NEAREST_PLAYER)
         )
+        """
         agent.forward(1).place(MBlocks.stone_pressure_plate)
         agent.forward(1).place(MBlocks.redstone_wire)
         agent.forward(1).place((MBlocks.gold_block,Command.SetDirection(up=-1))).place(MBlocks.note_block)
         agent.forward(1).place(RedstoneRepeater.create(delay=2))
         print(agent(mc))
+        """
         agent.forward()
         agent.forward()
         
@@ -257,7 +251,7 @@ if __name__ == "__main__":
         max_length = 10
         next_col_len = 9
         machine_size = 7
-        sound_groups = convert_midi_to_grouped_noteblocks("Resources/Myosotis.mid",100,1.0)
+        sound_groups = convert_midi_to_grouped_noteblocks("Resources/最終鬼畜フランドールS.mid",100,1.0)
         agent.fill(
             Command.SetDirection(forward=-3,right=-3),
             Command.SetDirection(forward=4,up=3),
@@ -266,13 +260,19 @@ if __name__ == "__main__":
         agent.place(MBlocks.red_wool).place((MBlocks.heavy_weighted_pressure_plate,Command.SetDirection(up=1)))
         agent.back(1)
         start_pos = agent.pos.copy()
+        mid_pos = agent.pos.copy()
         agent.forward(2)
         do_place = True
+        current_index = 0
+        mid_index = (len(sound_groups)//max_length)//2
         if do_place:
             for i in tqdm.tqdm(range(len(sound_groups))):
                 total_delay, sounds = sound_groups[i]
                 set_sounds(total_delay, sounds)
                 if (i+1) % max_length == 0:
+                    if current_index == mid_index:
+                        mid_pos = agent.pos.copy()
+                    current_index += 1
                     Command.Tp(Target(SelectorType.NEAREST_PLAYER),agent.pos)(mc)
                     turn = 1 - 2*((i // max_length) % 2)
                     agent.turn_right(turn)
@@ -289,6 +289,14 @@ if __name__ == "__main__":
                     agent.forward()
                 #print(agent.commands)
                 agent(mc)
+        Command.Tp(Target(SelectorType.NEAREST_PLAYER),mid_pos)(mc)
+        imc_cmd = ImageCreator(
+            image_path="Resources/FlandreScarlet.jpg",
+            start_pos=mid_pos+IntPosition(0,-1,0),
+            width=image_size,
+            _rotation=(0,0,0)
+        )
+        print(imc_cmd(mc))
         Command.Tp(Target(SelectorType.NEAREST_PLAYER),start_pos)(mc)
         """
         
