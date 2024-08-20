@@ -477,6 +477,16 @@ class AgentCommander(CompoundCommand):
     def clear(self):
         self.commands = Commands()
         return self
+    
+    def fill(self,start:SetDirection,end:SetDirection,block:Union[Block,MBlocks,identifier]):
+        post_pos = self.pos.copy()
+        self.forward(start.forward).right(start.right).up(start.up)
+        clear_start = self.pos.copy()
+        self.back(start.forward).left(start.right).down(start.up)
+        self.forward(end.forward).right(end.right).up(end.up)
+        clear_end = self.pos.copy()
+        self.tp(post_pos)
+        return AdjustFill(Fill(clear_start,clear_end,block))
 
     def place(self, block: RelativeSetBlockTYPE):
         self.add(RelativeSetBlock(block_direction_pair=block))

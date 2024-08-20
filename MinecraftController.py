@@ -11,9 +11,10 @@ from PIL import Image
 import numpy as np
 from mcrcon import MCRcon
 from scipy.spatial import KDTree
+import tqdm
 
 from Command import Command
-from Command.CompoundCommand import AgentCommander, BaseSettings, GetPosition, GetRotation, SuperFlat
+from Command.CompoundCommand import AdjustFill, AgentCommander, BaseSettings, GetPosition, GetRotation, SuperFlat
 from Command.Hobby import ImageCreator,convert_midi_to_grouped_noteblocks
 from NBT.MBlocks import MBlocks
 from NBT.block_nbt import Block, BlockState, CommandBlock, CommandBlockTag, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
@@ -77,7 +78,7 @@ if __name__ == "__main__":
     from MShape.MShape import Cube, Plane
 
     with MinecraftController("MinecraftServer/server.properties") as mc:
-        image_size = 100
+        image_size = 10
 
         mc.print_command_result = True
         bs_cmd = BaseSettings(
@@ -184,9 +185,15 @@ if __name__ == "__main__":
             def set_additional_sound_blocks(delay:int):
                 if len(sounds) == 0:
                     return False
-                agent.up()
+                agent.up(2)
+                # 周囲をクリア
+                agent.fill(
+                    Command.SetDirection(forward=-3,right=-5),
+                    Command.SetDirection(forward=3,right=5,up=3),
+                    MBlocks.air
+                )(mc)
+                agent.place(MBlocks.redstone_wire)
                 slab = Slab(block_state=SlabState(SlabType.TOP))
-                agent.up().place(MBlocks.redstone_wire)
                 agent.up().place(slab).down()
                 agent.turn_left().forward()
                 agent.place(slab).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
@@ -198,26 +205,38 @@ if __name__ == "__main__":
                         return True
                 return False
             
-            start_len = 3
             if total_delay == 0:
                 total_delay = 20
+            start_len = 3
+            delay = total_delay
+            repeaters = 0
             if total_delay > 4:
-                for _ in range(total_delay//4):
-                    agent.place(MBlocks.stone).place((RedstoneRepeater.create(delay=4),Command.SetDirection(up=1)))
-                    agent.forward()
-                    start_len -= 1
+                repeaters = total_delay//4
                 if total_delay % 4 == 0:
                     delay = 4
                 else:
                     delay = total_delay % 4
-            else:
-                delay = total_delay
-            
-            print(delay)
-            if start_len > 0:
-                for _ in range(start_len):
-                    agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
-                    agent.forward()
+            start_len = max(start_len,repeaters)
+            # 周囲をクリア
+            agent.fill(
+                Command.SetDirection(right=-5),
+                Command.SetDirection(forward=start_len,right=5,up=2),
+                MBlocks.air
+            )(mc)
+            for i in range(start_len):
+                if start_len - i == 2:
+                    # 周囲をクリア
+                    agent.fill(
+                        Command.SetDirection(right=-5),
+                        Command.SetDirection(forward=5,right=5,up=3),
+                        MBlocks.air
+                    )(mc)
+                agent.place(MBlocks.stone)
+                if i < repeaters:
+                    agent.place((RedstoneRepeater.create(delay=4),Command.SetDirection(up=1)))
+                else:
+                    agent.place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
+                agent.forward()
             agent.up()
             agent.place(MBlocks.stone)
             agent.down().memory_condition()
@@ -237,46 +256,35 @@ if __name__ == "__main__":
         """
         max_length = 10
         next_col_len = 9
-        sound_groups = convert_midi_to_grouped_noteblocks("Liszt_lacampanella.mid",100,1/0.7)
-        cols = np.ceil(len(sound_groups) / max_length)
-        col_length = (cols - 1) * (next_col_len-1)
-        print(f"col length: {col_length}")
-        agent.right(col_length//2)
-        agent.memory_condition()
-        start_pos = agent.pos
-        for c in range(int(cols//2)+2):
-            Command.Tp(Target(SelectorType.NEAREST_PLAYER),agent.pos)(mc)
-            sf_cmd = SuperFlat(
-                agent.pos,
-                IntPosition(max_length*10,0,max_length*10),
-                layers=[
-                    (20, Block(MBlocks.air)),
-                    (1, Block(MBlocks.grass_block)),
-                    (2, Block(MBlocks.dirt)),
-                    (1, Block(MBlocks.bedrock))
-                ],
-                start_point=SuperFlat.LayerStartPoint(1,SuperFlat.LayerReference.TOP)
-            )
-            sf_cmd(mc)
-            agent.left(next_col_len*2)
-        agent.comeback()
+        machine_size = 7
+        sound_groups = convert_midi_to_grouped_noteblocks("Resources/Myosotis.mid",100,1.0)
+        agent.fill(
+            Command.SetDirection(forward=-3,right=-3),
+            Command.SetDirection(forward=4,up=3),
+            MBlocks.air
+        )(mc)
+        agent.place(MBlocks.red_wool).place((MBlocks.heavy_weighted_pressure_plate,Command.SetDirection(up=1)))
+        agent.back(1)
+        start_pos = agent.pos.copy()
+        agent.forward(2)
         do_place = True
         if do_place:
-            for i, (total_delay, sounds) in enumerate(sound_groups,1):
+            for i in tqdm.tqdm(range(len(sound_groups))):
+                total_delay, sounds = sound_groups[i]
                 set_sounds(total_delay, sounds)
-                if i % max_length == 0:
+                if (i+1) % max_length == 0:
                     Command.Tp(Target(SelectorType.NEAREST_PLAYER),agent.pos)(mc)
-                    if (i // max_length) % 2 == 0:
-                        agent.turn_right()
-                    else:
-                        agent.turn_left()
+                    turn = 1 - 2*((i // max_length) % 2)
+                    agent.turn_right(turn)
+                    agent.fill(
+                        Command.SetDirection(forward=-1,right=-turn),
+                        Command.SetDirection(forward=next_col_len,up=2),
+                        MBlocks.air
+                    )(mc)
                     for _ in range(next_col_len-1):
                         agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
                         agent.forward()
-                    if (i // max_length) % 2 == 0:
-                        agent.turn_right()
-                    else:
-                        agent.turn_left()
+                    agent.turn_right(turn)
                     agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
                     agent.forward()
                 #print(agent.commands)

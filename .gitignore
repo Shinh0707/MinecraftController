@@ -9,6 +9,7 @@ MinecraftServer/
 minecraft_block_seacher/
 .vs/
 Resources/
+**/__pycache__/
 
 # Ignore test[number].py files
 test[0-9]*.py

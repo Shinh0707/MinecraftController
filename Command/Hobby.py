@@ -191,53 +191,85 @@ def adjust_note_to_range(note: int, range_min: int, range_max: int) -> int:
         return note
     return ((note - range_min) % 12) + range_min
 
-def extract_notes_for_note_block(midi_file_path: str, base_bpm: int=BASE_BPM, speed_modifier: float=1.0) -> List[Tuple[int, int, int]]:
-    """
-    ノートオンメッセージを抽出するメソッド
-
-    :param midi_file_path: MIDIファイルのパス
-    :return: (ノート番号(30~102(Minecraftのノートブロックで表現可能な範囲)に変換済み), 前の音からのRedStoneTick, インストゥルメント番号)のリスト
-    """
-    midi_file = mido.MidiFile(midi_file_path)
-    
+def process_track(track, ticks_per_beat: int, base_bpm: int) -> Tuple[List[Tuple[int, int, int, float, bool]],float]:
     notes = []
-    current_tempo = mido.bpm2tempo(base_bpm,BASE_TIME_SIGNATURE)  # デフォルトのテンポ (120 BPM)
-    time_signature = BASE_TIME_SIGNATURE  # Default time signature
+    current_tempo = mido.bpm2tempo(base_bpm, BASE_TIME_SIGNATURE)
+    time_signature = BASE_TIME_SIGNATURE
+    channel_volume = 127
+    expression = 127
     current_instrument = 0
     current_time = 0
-    note_range = [255,0]
-    #print(f"Tick per Beat: {midi_file.ticks_per_beat}")
-    
-    for msg in midi_file.merged_track:
+    end_time = 0
+    pitch_bend = 0  # ピッチベンドの初期値（0 = 変更なし）
+
+    for msg in track:
         current_time += msg.time
-        if msg.type == 'pitchwheel':
-            pass
-            #print(f"ピッチホイールの値: {msg.pitch}")
+        end_time += mido.tick2second(msg.time, ticks_per_beat, current_tempo)
+        if msg.is_cc(7):
+            channel_volume = msg.value
+        elif msg.is_cc(11):
+            expression = msg.value
         elif msg.type == 'program_change':
             current_instrument = msg.program
         elif msg.type == 'set_tempo':
             current_tempo = msg.tempo
-            #current_tempo = mido.bpm2tempo(mido.tempo2bpm(msg.tempo,time_signature),time_signature)
-            #print(f"  New tempo: {mido.tempo2bpm(current_tempo,time_signature):.2f} BPM")
         elif msg.type == 'time_signature':
-            #old_signature = time_signature
             time_signature = (msg.numerator, msg.denominator)
-            #print(f"  Old time signature: {old_signature[0]}/{old_signature[1]}")
-            print(f"  New time signature: {time_signature[0]}/{time_signature[1]}")
-            #current_tempo = mido.bpm2tempo(mido.tempo2bpm(current_tempo,time_signature),time_signature)
+        elif msg.type == 'pitchwheel':
+            pitch_bend = msg.pitch
         elif msg.type == 'note_on' and msg.velocity > 0:
-            if note_range[0] > msg.note:
-                note_range[0] = msg.note
-            elif note_range[1] < msg.note:
-                note_range[1] = msg.note
-            #(base_time_signature[1]*time_signature[0]/(base_time_signature[0]*time_signature[1]))
-            sec = mido.tick2second(current_time*speed_modifier, midi_file.ticks_per_beat, current_tempo)
-            #print((msg.note,msg.velocity,msg.time, sec, current_instrument))
-            note = adjust_note_to_range(msg.note,*NOTE_BLOCK_RANGE)
-            notes.append((note, max(0,int(sec/0.1)), current_instrument))
-            current_time = 0
-    #print("Note Range:",note_range)
-    return notes
+            sec = mido.tick2second(current_time, ticks_per_beat, current_tempo)
+            is_percussion = msg.channel == 9  # MIDI ではチャンネル 10 (0-indexed で 9) がパーカッション
+            
+            if is_percussion:
+                note = msg.note  # パーカッションの場合、ノート番号をそのまま使用
+            else:
+                note = adjust_note_to_range(msg.note+round(pitch_bend / 8192 * 2), *NOTE_BLOCK_RANGE)
+            
+            notes.append((note, sec, current_instrument, channel_volume*expression*msg.velocity/(127*127), is_percussion))
+
+    return notes,end_time
+
+def extract_notes_for_note_block(midi_file_path: str, base_bpm: int = BASE_BPM, speed_modifier: float = 1.0) -> List[Tuple[int, int, int, bool, int]]:
+    if speed_modifier == 0:
+        return []
+    midi_file = mido.MidiFile(midi_file_path)
+    end_time = 0.0
+    all_notes = []
+
+    for i, track in enumerate(midi_file.tracks):
+        track_notes, track_end_time = process_track(track, midi_file.ticks_per_beat, base_bpm)
+        all_notes.extend(track_notes)
+        end_time = max(end_time, track_end_time)
+    if len(all_notes) == 0:
+        return []
+    # ノートをタイムスタンプでソート
+    all_notes.sort(key=lambda x: np.sign(speed_modifier)*x[1])
+    min_velocity = max(64,min([x[3] for x in all_notes]))
+    scale = 10.0/speed_modifier
+    # 重複を除去し、タイムスタンプを相対時間に変換
+    final_notes = []
+    queues = []
+    last_time = 0.0
+    for note, time, instrument, velocity, is_percussion in all_notes:
+        if time < last_time:
+            queues.append((note, 0, instrument, is_percussion))
+        else:
+            rtick = max(0, round((time - last_time)*scale))
+            if rtick > 0:
+                if len(queues) > 0:
+                    final_notes.extend(queues)
+                last_time = time
+                queues = [(note, rtick, instrument, is_percussion)]
+            else:
+                queues.append((note, 0, instrument, is_percussion))
+        if velocity > min_velocity:
+            for _ in range(int(np.ceil(velocity/min_velocity)-1)):
+                queues.append((note, 0, instrument, is_percussion))
+    if len(queues) > 0:
+        final_notes.extend(queues)
+    print(f"Duration: {end_time}")
+    return final_notes
 
 NoteBlockInstruction = Tuple[MBlocks, int]
 GroupedNoteBlockInstructions = List[Tuple[int, List[NoteBlockInstruction]]]
@@ -257,9 +289,9 @@ def convert_midi_to_grouped_noteblocks(midi_file_path: str, base_bpm: int=BASE_B
     # Keep track of the last used instrument for each MIDI instrument
     last_used_instrument: Dict[int, Instrument] = defaultdict(lambda: None)
 
-    for note, delay, midi_instrument in notes:
+    for note, delay, midi_instrument, is_percussion in notes:
         # Get all possible Minecraft instruments for this note
-        minecraft_instruments = Instrument.note_to_instruments(note)
+        minecraft_instruments = Instrument.note_to_instruments(note, is_percussion)
         
         if minecraft_instruments:
             # First, try to use the same instrument as the last note with this MIDI instrument
@@ -267,7 +299,11 @@ def convert_midi_to_grouped_noteblocks(midi_file_path: str, base_bpm: int=BASE_B
                 chosen_instrument = last_used_instrument[midi_instrument]
                 operation_count = next(count for instr, count in minecraft_instruments if instr == chosen_instrument)
             else:
-                # If we can't use the same instrument, choose the first available
+                if len(minecraft_instruments) > 1:
+                    if any([(midi_instrument in instr.value[-2]) for instr, _ in minecraft_instruments]):
+                        minecraft_instruments = [(instr,oc) for instr, oc in minecraft_instruments if (midi_instrument in instr.value[-2])]
+                    # If we can't use the same instrument, choose the first available
+                    minecraft_instruments.sort(key=lambda x: (abs(x[1]-12), x[0].value[-1]))
                 chosen_instrument, operation_count = minecraft_instruments[0]
             
             # Update the last used instrument for this MIDI instrument

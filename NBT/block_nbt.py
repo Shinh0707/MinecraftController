@@ -59,32 +59,38 @@ class Block:
     
 class Instrument(Enum):
     # (ノートナンバーの開始番号, 下に置くブロックのid, 対応するmidiのinstrument(推定))
-    BELL = (78, MBlocks.gold_block, [112,113])
-    CHIME = (78, MBlocks.packed_ice, [14,15])
-    XYLOPHONE = (78, MBlocks.bone_block, [12,13])
-    COW_BELL = (0, MBlocks.soul_sand, [56]) # 66
-    FLUTE = (0, MBlocks.clay, list(range(64,80))) # 66
-    HARP = (54, MBlocks.dirt, list(range(9))+list(range(16,24))+[46,108])
-    BIT = (54, MBlocks.emerald_block, [80,81])
-    IRON_XYLOPHONE = (54, MBlocks.iron_block, [8,9,11])
-    PLING = (54, MBlocks.glowstone, list(range(82,96)))
-    BANJO = (54, MBlocks.hay_block, list(range(104,107)))
-    GUITAR = (42, MBlocks.white_wool, list(range(32,40))+[120])
-    BASS = (30, MBlocks.oak_planks, list(range(32,40))+[43])
-    DIDGERIDOO = (30, MBlocks.pumpkin,  list(range(104, 107)))
-    BASEDRUM = (0, MBlocks.stone, list(range(114,119)))
-    HAT = (0, MBlocks.glass, [98])
-    SNARE = (0, MBlocks.sand, [119])
+    CHIME = (78, MBlocks.packed_ice, [14,15], 3)
+    XYLOPHONE = (78, MBlocks.bone_block, [12,13], 2)
+    BELL = (78, MBlocks.gold_block, [112,113], 1)
+    COW_BELL = (0, MBlocks.soul_sand, [56], 2) # 66
+    FLUTE = (0, MBlocks.clay, list(range(64,80)), 1) # 66
+    HARP = (54, MBlocks.dirt, list(range(9))+list(range(16,24))+[46,108],1)
+    BIT = (54, MBlocks.emerald_block, [80,81], 4)
+    IRON_XYLOPHONE = (54, MBlocks.iron_block, [8,9,11], 3)
+    PLING = (54, MBlocks.glowstone, list(range(82,96)), 2)
+    BANJO = (54, MBlocks.hay_block, list(range(104,107)), 5)
+    GUITAR = (42, MBlocks.white_wool, list(range(32,40))+[120], 1)
+    DIDGERIDOO = (30, MBlocks.pumpkin,  list(range(104, 107)), 2)
+    BASS = (30, MBlocks.oak_planks, list(range(32,40))+[43], 1)
+    BASEDRUM = (0, MBlocks.stone, list(range(114,119)), 1)
+    HAT = (0, MBlocks.glass, [98], 2)
+    SNARE = (0, MBlocks.sand, [119], 3)
 
     @staticmethod
-    def note_to_instruments(note: int):
+    def note_to_instruments(note: int,is_percussion: bool=False):
         """
         Return list[tuple[Instrument,int]]: 音ブロックの情報と操作回数を返す
         """
         preds = []
         for n in Instrument:
-            if 0 <= note - n.value[0] <= 24:
+            if is_percussion:
+                if n.value[0] == 0:
+                    if note in n.value[2]:
+                        preds.append((n,0))
+            elif 0 <= note - n.value[0] <= 24:
                 preds.append((n, round(note - n.value[0])))
+        if is_percussion and len(preds) == 0:
+            return [(Instrument.BASEDRUM,0)]
         return preds
 
 @dataclass
