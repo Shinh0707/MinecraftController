@@ -17,8 +17,9 @@ import tqdm
 from Command import Command
 from Command.CompoundCommand import AdjustFill, AgentCommander, BaseSettings, GetPosition, GetRotation, SuperFlat
 from Command.Hobby import ImageCreator, MusicBoxCreator,convert_midi_to_grouped_noteblocks, playmidisound
+from Helper.raw_json import RawJson, TextColor
 from NBT.MBlocks import MBlocks
-from NBT.block_nbt import Block, BlockState, CommandBlock, CommandBlockTag, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
+from NBT.block_nbt import Block, BlockState, CommandBlock, CommandBlockState, CommandBlockTag, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
 from NBT.item_nbt import Compass, CompassState, CompassTag, MItem
 from NBT.mob_nbt import ActiveEffects, Attribute, Attributes, CommonItemTags, CommonMobTags, HandItems, StatusEffect
 from NBT.nbt import NBTTag, NBTType, NBTCompound, UUID
@@ -127,8 +128,8 @@ if __name__ == "__main__":
         cube.translate(IntPosition(10,0,0))
         cube.place()(mc)
         """
-        #playmidisound(mc, player_pos, "Resources/irisfix.mid") # 理論上聞くことのできる結果
-        m_agent = MusicBoxCreator("Resources/irisfix.mid",player_pos,player_rot)
+        #playmidisound(mc, player_pos, "Resources/Liszt_lacampanella.mid") # 理論上聞くことのできる結果
+        m_agent = MusicBoxCreator("Resources/Liszt_lacampanella.mid",player_pos,player_rot)
         m_agent(mc)
         # Pos:[-1824,-60,985]
         """

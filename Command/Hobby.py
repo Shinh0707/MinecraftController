@@ -11,9 +11,10 @@ from functools import lru_cache
 
 import mido
 from tqdm import tqdm
-from Command.Command import Command, Commands, Fill, SetBlock, SET_BLOCK_MODE, SetDirection, Tp
+from Command.Command import Command, Commands, Fill, SetBlock, SET_BLOCK_MODE, SetDirection, Title, Tp
 from Command.CompoundCommand import AgentCommander, CompoundCommand, AdjustFill, SetBlocks
-from Helper.helpers import adaptive_optimize_midi_timing, optimize_midi_timing, optimize_midi_timing_dynamic, optimize_midi_timing_fast,group_notes, optimize_midi_timing_uniform, pixelate_image
+from Helper.helpers import pixelate_image, to_title_case
+from Helper.raw_json import RawJson, TextColor
 from NBT.parameter import IntPosition, boolean, rotation
 from NBT.selector import SelectorType, Target
 from NBT.block_nbt import Block, CommandBlock, CommandBlockState, CommandBlockTag, Instrument, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
@@ -331,52 +332,6 @@ def extract_notes_for_note_block(midi_file_path: str, speed_modifier: float = 1.
                 for _ in range(int(math.ceil(all_notes[n][3]/min_velocity) - 1)):
                     result.append((0,n))
             dly = 0
-            """
-            note_decay = round((all_notes[n][5] - all_notes[n][1])*10/speed_modifier) - 1
-            if note_decay > 0:
-                current_decaies.append((0, note_decay, n))
-                print(f"assign decay: {n}, {note_decay}")
-            """
-        """
-        if next_d > 1 and len(decaies) > 0:
-            for ndi in range(next_d-1):
-                ddels = []
-                dly = 1
-                decaies = [(dc+1,mdc,dn) for dc,mdc,dn in decaies]
-                for di,dc in enumerate(decaies):
-                    dcn = dc[2]
-                    if int(all_notes[dcn][3]*(decay_rate**dc[0])) >= min_velocity:
-                        result.append((dly, dcn))
-                        dly = 0
-                        if dc[0] > dc[1]:
-                            ddels.append(di)
-                    else:
-                        ddels.append(di)
-                decaies = [dc for di,dc in enumerate(decaies) if not di in ddels]
-                if len(decaies) == 0:
-                    next_del = ndi
-                    break
-        else:
-            next_del = 0
-        if current_decaies:
-            decaies.extend(current_decaies)
-        """
-    """
-    while len(decaies) > 0:
-        ddels = []
-        dly = 1
-        decaies = [(dc+1,mdc,dn) for dc,mdc,dn in decaies]
-        for di,dc in enumerate(decaies):
-            dcn = dc[2]
-            if int(all_notes[dcn][3]*(decay_rate**dc[0])) >= min_velocity:
-                result.append((dly, dcn))
-                dly = 0
-                if dc[0] > dc[1]:
-                    ddels.append(di)
-            else:
-                ddels.append(di)
-        decaies = [dc for di,dc in enumerate(decaies) if not di in ddels]
-    """
     final_notes = [(all_notes[n][0],delay,all_notes[n][2],all_notes[n][3],all_notes[n][4]) for delay,n in result]
     print(f"Duration: {end_time}")
     return final_notes
@@ -466,7 +421,7 @@ class MusicBoxCreator(CompoundCommand):
     def __post_init__(self):
         self.agent = AgentCommander(self.start_pos,self.start_rotation.to_cardinal(),self.execute_as)
         self.sound_groups = convert_midi_to_grouped_noteblocks(self.midi_file_path, self.speed_modifier)
-        self.midi_name = Path(self.midi_file_path).stem
+        self.midi_name = to_title_case(Path(self.midi_file_path).stem)
 
     def set_sounds(self, total_delay: int, sounds: List[NoteBlockInstruction], is_middle: bool, mc):
         sounds = sounds[:80] # 上限80音
@@ -620,7 +575,10 @@ class MusicBoxCreator(CompoundCommand):
             CommandBlock(
                 CommandBlockState(boolean(False)),
                 CommandBlockTag(
-                    Command='title @p title {"text":"{}","color":"gold"}'.format(self.midi_name)
+                    Command=Title.set_title(
+                            Target(SelectorType.ALL_PLAYERS),
+                            RawJson.text(self.midi_name).with_color(TextColor.GOLD)
+                    )
                 ),
                 CommandBlock.CommandBlockType.IMPULSE
             )

@@ -7,6 +7,7 @@ from enum import Enum, Flag, auto
 
 import numpy as np
 from Command.CommandEnum import Advancements
+from Helper.raw_json import RawJson
 from NBT.MBlocks import MBlocks
 from NBT.block_nbt import Block
 from NBT.item_nbt import MItem
@@ -555,6 +556,75 @@ class Summon(Command):
             command_parts.append(self.nbt.to_nbt())
         
         return " ".join(command_parts)
+
+class TitleAction(Enum):
+    CLEAR = "clear"
+    RESET = "reset"
+    TITLE = "title"
+    SUBTITLE = "subtitle"
+    ACTIONBAR = "actionbar"
+
+@dataclass
+class Title(Command):
+    targets: Target
+    action: TitleAction
+    title: Optional[RawJson] = None
+    fade_in: Optional[Union[Tick, Seconds, Day]] = None
+    stay: Optional[Union[Tick, Seconds, Day]] = None
+    fade_out: Optional[Union[Tick, Seconds, Day]] = None
+
+    def __post_init__(self):
+        if self.action in [TitleAction.CLEAR, TitleAction.RESET]:
+            if any([self.title, self.fade_in, self.stay, self.fade_out]):
+                raise ValueError(f"'{self.action.value}' action doesn't accept title or time parameters")
+        elif self.action in [TitleAction.TITLE, TitleAction.SUBTITLE, TitleAction.ACTIONBAR]:
+            if self.title is None:
+                raise ValueError(f"'{self.action.value}' action requires a title")
+            if any([self.fade_in, self.stay, self.fade_out]):
+                raise ValueError(f"'{self.action.value}' action doesn't accept time parameters")
+        else:  # Times
+            if not all([self.fade_in, self.stay, self.fade_out]):
+                raise ValueError("'times' action requires all time parameters")
+            if self.title:
+                raise ValueError("'times' action doesn't accept a title parameter")
+
+    def __command_str__(self) -> str:
+        parts = [str(self.targets), self.action.value]
+        
+        if self.action in [TitleAction.TITLE, TitleAction.SUBTITLE, TitleAction.ACTIONBAR]:
+            parts.append(self.title)
+        elif self.action not in [TitleAction.CLEAR, TitleAction.RESET]:
+            parts.append("times")
+            parts.extend([str(t) for t in [self.fade_in, self.stay, self.fade_out]])
+        
+        return " ".join(map(str, parts))
+
+    @classmethod
+    def clear(cls, targets: Target) -> 'Title':
+        return cls(targets=targets, action=TitleAction.CLEAR)
+
+    @classmethod
+    def reset(cls, targets: Target) -> 'Title':
+        return cls(targets=targets, action=TitleAction.RESET)
+
+    @classmethod
+    def set_title(cls, targets: Target, title: RawJson) -> 'Title':
+        return cls(targets=targets, action=TitleAction.TITLE, title=title)
+
+    @classmethod
+    def set_subtitle(cls, targets: Target, title: RawJson) -> 'Title':
+        return cls(targets=targets, action=TitleAction.SUBTITLE, title=title)
+
+    @classmethod
+    def set_actionbar(cls, targets: Target, title: RawJson) -> 'Title':
+        return cls(targets=targets, action=TitleAction.ACTIONBAR, title=title)
+
+    @classmethod
+    def set_times(cls, targets: Target, fade_in: Union[Tick, Seconds, Day], 
+                  stay: Union[Tick, Seconds, Day], 
+                  fade_out: Union[Tick, Seconds, Day]) -> 'Title':
+        return cls(targets=targets, action=TitleAction.TITLE, 
+                   fade_in=fade_in, stay=stay, fade_out=fade_out)
 
 @dataclass
 class Execute(Command):
