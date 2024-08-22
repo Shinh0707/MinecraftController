@@ -1,21 +1,16 @@
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from enum import Enum, auto
 from dataclasses import dataclass, field
-
 from NBT.MBlocks import MBlocks
 from NBT.nbt import NBTCompound, NBTTag, NBTType
 from NBT.parameter import IntPosition, boolean, facing, identifier, Facing
-
-
-if TYPE_CHECKING:
-    from Command.Command import Command
 
 @dataclass
 class BlockState:
 
     def __str__(self):
         params = vars(self)
-        states = [f"{n}={v}" for n,v in params if not v is None]
+        states = [f"{n}={v}" for n,v in params.items() if not v is None]
         if len(states) > 0:
             return "["+','.join(states)+"]"
         return ""
@@ -62,8 +57,8 @@ class Instrument(Enum):
     CHIME = (78, MBlocks.packed_ice, [14,15], 3)
     XYLOPHONE = (78, MBlocks.bone_block, [12,13], 2)
     BELL = (78, MBlocks.gold_block, [112,113], 1)
-    COW_BELL = (0, MBlocks.soul_sand, [56], 2) # 66
-    FLUTE = (0, MBlocks.clay, list(range(64,80)), 1) # 66
+    COW_BELL = (-1, MBlocks.soul_sand, [56], 2) # 66
+    FLUTE = (-1, MBlocks.clay, list(range(64,80)), 1) # 66
     HARP = (54, MBlocks.dirt, list(range(9))+list(range(16,24))+[46,108],1)
     BIT = (54, MBlocks.emerald_block, [80,81], 4)
     IRON_XYLOPHONE = (54, MBlocks.iron_block, [8,9,11], 3)
@@ -92,6 +87,20 @@ class Instrument(Enum):
         if is_percussion and len(preds) == 0:
             return [(Instrument.BASEDRUM,0)]
         return preds
+    
+    def playsound_command(self, operation_count: int, targets: 'Target', pos: IntPosition,volume: float=1.0, minVolume: float=0.0):
+        from Command.Command import Command
+        # playsound <sound> <source> <targets> [<pos>] [<volume>] [<pitch>] [<minVolume>]
+        base_str = "playsound block.note_block.{} record {} {}".format(
+            self.name.lower(),
+            targets,
+            pos.abs
+        )
+        additional_str = ' '.join([str(p) for p in [volume, 2**((operation_count-12)/12), minVolume] if not p is None])
+        if len(additional_str) > 0:
+            base_str += " " + additional_str
+        return Command.c(base_str)
+
 
 @dataclass
 class NoteBlockState(BlockState):
@@ -101,11 +110,17 @@ class NoteBlockState(BlockState):
 
     def __str__(self):
         return "["+','.join([f"note={self.note}",f"powered={self.powered}",f"instrument={self.instrument.name.lower()}"])+"]"
+    
+    def playsound_command(self, targets: 'Target', pos: IntPosition):
+        return self.instrument.playsound_command(self.note,targets)
 
 @dataclass
 class NoteBlock(Block):
     id: identifier = field(default_factory=lambda: identifier(name=MBlocks.note_block), init=False)
     block_state : NoteBlockState
+
+    def playsound_command(self, targets: 'Target', pos: IntPosition):
+        return self.block_state.playsound_command(targets)
 
 @dataclass
 class CommandBlockState(BlockState):
@@ -122,6 +137,7 @@ class CommandBlockTag(NBTCompound):
     tags: Optional[list[NBTTag]] = field(default_factory=list)
 
     def __post_init__(self):
+        from Command.Command import Command
         if self.Command:
             if isinstance(self.Command, Command):
                 command_str = str(self.Command)

@@ -2,6 +2,7 @@ from __future__ import absolute_import, annotations
 import random
 import re
 import sys
+from turtle import right
 from typing import List, Literal, Tuple, Optional, Union, Dict, Any
 from abc import ABC, abstractmethod
 from enum import Enum, auto
@@ -15,7 +16,7 @@ import tqdm
 
 from Command import Command
 from Command.CompoundCommand import AdjustFill, AgentCommander, BaseSettings, GetPosition, GetRotation, SuperFlat
-from Command.Hobby import ImageCreator,convert_midi_to_grouped_noteblocks
+from Command.Hobby import ImageCreator, MusicBoxCreator,convert_midi_to_grouped_noteblocks, playmidisound
 from NBT.MBlocks import MBlocks
 from NBT.block_nbt import Block, BlockState, CommandBlock, CommandBlockTag, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
 from NBT.item_nbt import Compass, CompassState, CompassTag, MItem
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     from MShape.MShape import Cube, Plane
 
     with MinecraftController("MinecraftServer/server.properties") as mc:
-        image_size = 200
+        image_size = 5
 
         mc.print_command_result = True
         bs_cmd = BaseSettings(
@@ -126,178 +127,10 @@ if __name__ == "__main__":
         cube.translate(IntPosition(10,0,0))
         cube.place()(mc)
         """
-
-        agent = AgentCommander(
-            player_pos,
-            player_rot.to_cardinal(),
-            Target(SelectorType.NEAREST_PLAYER)
-        )
-        """
-        agent.forward(1).place(MBlocks.stone_pressure_plate)
-        agent.forward(1).place(MBlocks.redstone_wire)
-        agent.forward(1).place((MBlocks.gold_block,Command.SetDirection(up=-1))).place(MBlocks.note_block)
-        agent.forward(1).place(RedstoneRepeater.create(delay=2))
-        print(agent(mc))
-        """
-        agent.forward()
-        agent.forward()
-        
-        def set_sounds(total_delay:int, sounds: list[tuple[MBlocks,int]]):
-
-            def set_sound_blocks(delay:int,last_skip:bool=False):
-                if len(sounds) == 0:
-                    return False
-                agent.forward()
-                agent.place(MBlocks.stone).place((RedstoneRepeater.create(delay=delay),Command.SetDirection(up=1)))
-                agent.forward()
-                s, t = sounds.pop()
-                agent.place(s).place((NoteBlock(NoteBlockState(note=t)),Command.SetDirection(up=1)))
-                agent.left()
-                if len(sounds) == 0:
-                    return False
-                s, t = sounds.pop()
-                agent.place(s).place((NoteBlock(NoteBlockState(note=t)),Command.SetDirection(up=1)))
-                agent.right(2)
-                if not last_skip:
-                    if len(sounds) == 0:
-                        return False
-                    s, t = sounds.pop()
-                    agent.place(s).place((NoteBlock(NoteBlockState(note=t)),Command.SetDirection(up=1)))
-                agent.left().back(2)
-                return True
-
-            def setting_sound_blocks(delay:int,last_skip:bool=False):
-                if set_sound_blocks(delay):
-                    agent.turn_left()
-                    if set_sound_blocks(delay):
-                        agent.turn_right(2)
-                        if set_sound_blocks(delay,last_skip):
-                            agent.turn_left()
-                            return True
-                return False
-
-            def set_additional_sound_blocks(delay:int):
-                if len(sounds) == 0:
-                    return False
-                agent.up(2)
-                # 周囲をクリア
-                agent.fill(
-                    Command.SetDirection(forward=-3,right=-5),
-                    Command.SetDirection(forward=3,right=5,up=3),
-                    MBlocks.air
-                )(mc)
-                agent.place(MBlocks.redstone_wire)
-                slab = Slab(block_state=SlabState(SlabType.TOP))
-                agent.up().place(slab).down()
-                agent.turn_left().forward()
-                agent.place(slab).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
-                if setting_sound_blocks(delay,True):
-                    agent.back().turn_left(2).forward()
-                    agent.place(slab).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
-                    if setting_sound_blocks(delay,True):
-                        agent.back().turn_left()
-                        return True
-                return False
-            
-            if total_delay == 0:
-                total_delay = 20
-            start_len = 3
-            delay = total_delay
-            repeaters = 0
-            if total_delay > 4:
-                repeaters = total_delay//4
-                if total_delay % 4 == 0:
-                    delay = 4
-                else:
-                    delay = total_delay % 4
-            start_len = max(start_len,repeaters)
-            # 周囲をクリア
-            agent.fill(
-                Command.SetDirection(right=-5),
-                Command.SetDirection(forward=start_len,right=5,up=2),
-                MBlocks.air
-            )(mc)
-            for i in range(start_len):
-                if start_len - i == 2:
-                    # 周囲をクリア
-                    agent.fill(
-                        Command.SetDirection(right=-5),
-                        Command.SetDirection(forward=5,right=5,up=3),
-                        MBlocks.air
-                    )(mc)
-                agent.place(MBlocks.stone)
-                if i < repeaters:
-                    agent.place((RedstoneRepeater.create(delay=4),Command.SetDirection(up=1)))
-                else:
-                    agent.place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
-                agent.forward()
-            agent.up()
-            agent.place(MBlocks.stone)
-            agent.down().memory_condition()
-            success = setting_sound_blocks(delay)
-            while success:
-                success = set_additional_sound_blocks(delay)
-            agent.comeback()
-            agent.forward(3)
-        
-        """
-        
-        # テスト用
-        sound_groups = [
-            [random.randint(1,20), random.choices([(MBlocks.emerald_block,10),
-                (MBlocks.stone,3),
-                (MBlocks.diamond_block,23)],k=random.randint(1,40))] for _ in range(20)]
-        """
-        max_length = 10
-        next_col_len = 9
-        machine_size = 7
-        sound_groups = convert_midi_to_grouped_noteblocks("Resources/最終鬼畜フランドールS.mid",100,1.0)
-        agent.fill(
-            Command.SetDirection(forward=-3,right=-3),
-            Command.SetDirection(forward=4,up=3),
-            MBlocks.air
-        )(mc)
-        agent.place(MBlocks.red_wool).place((MBlocks.heavy_weighted_pressure_plate,Command.SetDirection(up=1)))
-        agent.back(1)
-        start_pos = agent.pos.copy()
-        mid_pos = agent.pos.copy()
-        agent.forward(2)
-        do_place = True
-        current_index = 0
-        mid_index = (len(sound_groups)//max_length)//2
-        if do_place:
-            for i in tqdm.tqdm(range(len(sound_groups))):
-                total_delay, sounds = sound_groups[i]
-                set_sounds(total_delay, sounds)
-                if (i+1) % max_length == 0:
-                    if current_index == mid_index:
-                        mid_pos = agent.pos.copy()
-                    current_index += 1
-                    Command.Tp(Target(SelectorType.NEAREST_PLAYER),agent.pos)(mc)
-                    turn = 1 - 2*((i // max_length) % 2)
-                    agent.turn_right(turn)
-                    agent.fill(
-                        Command.SetDirection(forward=-1,right=-turn),
-                        Command.SetDirection(forward=next_col_len,up=2),
-                        MBlocks.air
-                    )(mc)
-                    for _ in range(next_col_len-1):
-                        agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
-                        agent.forward()
-                    agent.turn_right(turn)
-                    agent.place(MBlocks.stone).place((MBlocks.redstone_wire,Command.SetDirection(up=1)))
-                    agent.forward()
-                #print(agent.commands)
-                agent(mc)
-        Command.Tp(Target(SelectorType.NEAREST_PLAYER),mid_pos)(mc)
-        imc_cmd = ImageCreator(
-            image_path="Resources/FlandreScarlet.jpg",
-            start_pos=mid_pos+IntPosition(0,-1,0),
-            width=image_size,
-            _rotation=(0,0,0)
-        )
-        print(imc_cmd(mc))
-        Command.Tp(Target(SelectorType.NEAREST_PLAYER),start_pos)(mc)
+        #playmidisound(mc, player_pos, "Resources/irisfix.mid") # 理論上聞くことのできる結果
+        m_agent = MusicBoxCreator("Resources/irisfix.mid",player_pos,player_rot)
+        m_agent(mc)
+        # Pos:[-1824,-60,985]
         """
         
         monster_id = "magma_cube"

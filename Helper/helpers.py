@@ -468,3 +468,326 @@ def rotate_3d_array(shape, rot_matrix, origin=(0, 0, 0), addidional_mask: np.nda
         new_array[*selector] = x.ravel() # remove_false_planes(new_array,indice_mask)
         return fill_empty_voxels_morphological(*compress_to_center(fill_empty_voxels_morphological(new_array,indice_mask),indice_mask),return_mask=True)
     return converter
+
+def adaptive_optimize_midi_timing(X, dt, tempo_preservation_factor=0.9, length_flexibility=0.05):
+    # X: note-onのタイミングを秒単位で表した配列
+    # dt: 出力可能な最小時間間隔
+    # window_size: 密度計算のウィンドウサイズ（秒）
+    # tempo_preservation_factor: テンポ感維持の強さを制御するファクター (0-1)
+    # length_flexibility: 全体の長さの許容変動幅 (0-1)
+
+    # Step 1: Xをソートし、同時刻のノートをグループ化
+    sorted_events = defaultdict(list)
+    for i, x in enumerate(X):
+        sorted_events[x].append(i)
+
+    # Step 2: 局所的なテンポの計算
+    times = sorted(sorted_events.keys())
+    local_tempos = []
+    for i in range(1, len(times)):
+        interval = times[i] - times[i-1]
+        local_tempos.append(1 / interval if interval > 0 else float('inf'))
+
+    # Step 3: テンポ変化に基づく適応的な調整係数の計算
+    adjustment_factors = []
+    avg_tempo = np.mean([t for t in local_tempos if t != float('inf')])
+    for tempo in local_tempos:
+        if tempo == float('inf'):
+            factor = 1.0
+        else:
+            tempo_ratio = tempo / avg_tempo
+            factor = 1 + (tempo_ratio - 1) * (1 - tempo_preservation_factor)
+        adjustment_factors.append(factor)
+
+    # Step 4: テンポ感を維持しつつタイミングを最適化
+    optimized_delays = []
+    current_time = 0
+    total_original_time = times[-1] - times[0]
+
+    for i in range(len(times)):
+        if i == 0:
+            target_delay = times[0]
+        else:
+            target_delay = (times[i] - times[i-1]) * adjustment_factors[i-1]
+        
+        optimal_delay = round(target_delay / dt) * dt
+        optimized_delays.append((optimal_delay, sorted_events[times[i]]))
+        current_time += optimal_delay
+
+    # Step 5: 全体の長さを調整（許容範囲内で）
+    total_optimized_time = sum(delay for delay, _ in optimized_delays)
+    length_ratio = total_optimized_time / total_original_time
+
+    if abs(length_ratio - 1) > length_flexibility:
+        scale_factor = (1 + np.sign(1 - length_ratio) * length_flexibility) / length_ratio
+        optimized_delays = [(delay * scale_factor, notes) for delay, notes in optimized_delays]
+
+    # Step 6: 結果を整形
+    result = []
+    for delay, notes in optimized_delays:
+        result.append((max(1, int(round(delay / dt))), notes))  # 最小遅延を1に設定
+
+    return result
+
+from scipy.cluster.hierarchy import linkage
+from scipy.cluster.hierarchy import fcluster
+from scipy.spatial.distance import pdist
+
+def optimize_histogram_offset(data: np.ndarray, bin_width: float, n_offsets: int = 100) -> Tuple[float, np.ndarray, np.ndarray]:
+    data_min, data_max = np.min(data), np.max(data)
+    n_bins = int(np.ceil((data_max - data_min) / bin_width))
+    
+    max_variance = -np.inf
+    best_offset = 0
+    best_hist = None
+    best_bin_edges = None
+    
+    for offset in np.linspace(0, bin_width, n_offsets):
+        # オフセットを適用してbin edgesを計算
+        bin_edges = np.arange(data_min - offset, data_max + bin_width, bin_width)
+        hist, _ = np.histogram(data, bins=bin_edges)
+        
+        # binのデータ点数の分散を計算
+        variance = np.var(hist)
+        
+        if variance > max_variance:
+            max_variance = variance
+            best_offset = offset
+            best_hist = hist
+            best_bin_edges = bin_edges
+    
+    return best_offset, best_hist, best_bin_edges
+
+def optimize_midi_timing(X: List[float], dt: float) -> List[Tuple[int, List[int]]]:
+    X = np.array(sorted(X))
+    
+    # optimize_histogram_offset 関数を使用してヒストグラムを最適化
+    best_offset, best_hist, best_bin_edges = optimize_histogram_offset(X, dt)
+    
+    # 最適化されたビンにノートを割り当て
+    assigned_bins = np.digitize(X+best_offset, best_bin_edges)
+    
+    # 結果を格納するリスト
+    result = []
+    
+    # 各ビンに割り当てられたノートをグループ化
+    for bin_index in range(len(best_hist)):
+        notes = np.where(assigned_bins == bin_index)[0].tolist()
+        if notes:
+            time = int(round((best_bin_edges[bin_index] + best_offset) / dt))
+            result.append((time, notes))
+    
+    # 相対的な遅延時間に変換
+    fin = []
+    last_time = 0
+    for time, notes in result:
+        fin.append((time - last_time, notes))
+        last_time = time
+    
+    return fin
+
+def optimize_midi_timing_fast(X, dt):
+    X = np.sort(np.array(X))
+    max_clusters = min(len(X), int(X[-1] / dt) + 1)
+
+    # Use pdist to pre-compute distances
+    distances = pdist(X.reshape(-1, 1))
+    Z = linkage(distances, method='ward')
+
+    # Binary search for optimal threshold
+    low, high = 0, X[-1]
+    while high - low > dt / 100:
+        threshold = (low + high) / 2
+        clusters = fcluster(Z, threshold, criterion='distance')
+        n_clusters = len(np.unique(clusters))
+        
+        if n_clusters > max_clusters:
+            low = threshold
+        else:
+            high = threshold
+    
+    clusters = fcluster(Z, high, criterion='distance')
+    n_clusters = len(np.unique(clusters))
+
+    # Vectorized operations for cluster statistics
+    cluster_ids = np.arange(1, n_clusters + 1)
+    cluster_mins = np.array([np.min(X[clusters == i]) for i in cluster_ids])
+    
+    # Snap to grid and assign in one step
+    snapped_times = np.round(cluster_mins / dt) * dt
+    assigned_times = snapped_times[np.searchsorted(cluster_mins, X) - 1]
+
+    # Efficient result creation
+    unique_times, inverse = np.unique(assigned_times, return_inverse=True)
+    delays = np.round(unique_times / dt).astype(int)
+    result = [(int(delays[i] - (0 if i == 0 else delays[i-1])),
+               np.where(inverse == i)[0].tolist()) for i in range(len(unique_times))]
+
+    return result
+
+from scipy.signal import find_peaks
+
+def optimize_midi_timing_dynamic(X, dt):
+    X = np.sort(np.array(X))
+    
+    def initial_grouping(X, dt):
+        diffs = np.diff(X)
+        peaks, _ = find_peaks(diffs, height=dt/2, distance=1)
+        return np.split(X, peaks + 1)
+    
+    def group_cost(group, target_time):
+        return np.sum((group - target_time)**2)
+    
+    def optimize_groups(groups, dt):
+        optimized = []
+        current_group = np.array([])
+        current_time = groups[0][0] if isinstance(groups[0], np.ndarray) else groups[0][1][0]
+        
+        for group in groups:
+            group_array = group if isinstance(group, np.ndarray) else group[1]
+            if current_group.size == 0:
+                current_group = group_array
+                continue
+            
+            combined = np.concatenate([current_group, group_array])
+            combined_center = np.mean(combined)
+            next_time = current_time + dt
+            
+            cost_separate = (group_cost(current_group, current_time) + 
+                             group_cost(group_array, next_time))
+            cost_combined = group_cost(combined, next_time)
+            
+            if cost_combined < cost_separate:
+                current_group = combined
+            else:
+                optimized.append((current_time, current_group))
+                current_group = group_array
+                current_time = next_time
+        
+        if current_group.size > 0:
+            optimized.append((current_time, current_group))
+        
+        return optimized
+    
+    def refine_groups(groups, dt):
+        refined = []
+        for time, group in groups:
+            if group.size > 1:
+                subgroups = initial_grouping(group, dt/2)
+                if len(subgroups) > 1:
+                    refined.extend([(time, sg) for sg in subgroups])
+                else:
+                    refined.append((time, group))
+            else:
+                refined.append((time, group))
+        return optimize_groups(refined, dt)
+    
+    initial_groups = initial_grouping(X, dt)
+    optimized_groups = optimize_groups([(0, group) for group in initial_groups], dt)
+    refined_groups = refine_groups(optimized_groups, dt)
+    
+    result = []
+    last_time = refined_groups[0][0] - dt
+    for time, group in refined_groups:
+        delay = int(round((time - last_time) / dt))
+        notes = np.where((X >= group[0]) & (X <= group[-1]))[0].tolist()
+        result.append((delay, notes))
+        last_time = time
+    
+    return result
+
+from scipy.optimize import minimize
+
+def optimize_midi_timing_uniform(X, dt):
+    X = np.sort(np.array(X))
+    
+    # ピーク検出（前回と同じ）
+    max_diff = np.max(np.diff(X))
+    peaks, _ = find_peaks(-np.diff(X), height=-max_diff, distance=int(dt/np.mean(np.diff(X))))
+    
+    # 初期グループ化
+    groups = np.split(X, peaks + 1)
+    
+    # 各グループの中央値を計算
+    group_times = np.array([np.median(group) for group in groups if len(group) > 0])
+    
+    # 最適化関数
+    def objective(offsets):
+        adjusted_times = group_times + offsets
+        intervals = np.diff(adjusted_times)
+        
+        # dtからの逸脱に対するペナルティ（二乗誤差）
+        interval_penalty = np.sum((intervals - dt)**2)
+        
+        # 元のタイミングからの逸脱に対するペナルティ
+        timing_penalty = np.sum(offsets**2)
+        
+        # 全体の時間範囲を保持するためのペナルティ
+        range_penalty = (adjusted_times[-1] - adjusted_times[0] - (len(adjusted_times) - 1) * dt)**2
+        
+        return interval_penalty + 0.00 * timing_penalty + 0*range_penalty
+    
+    # 制約条件：隣接するグループ間の順序を保持
+    def constraint(offsets):
+        adjusted_times = group_times + offsets
+        return np.diff(adjusted_times)  # すべての差が正であることを保証
+    
+    constraints = ({'type': 'ineq', 'fun': constraint})
+    
+    # 最適化
+    initial_offsets = np.zeros_like(group_times)
+    result = minimize(objective, initial_offsets, method='SLSQP', constraints=constraints)
+    
+    optimized_offsets = result.x
+    adjusted_times = group_times + optimized_offsets
+    
+    # 結果の生成
+    result = []
+    last_time = adjusted_times[0] - dt  # 最初のグループの前に dt の間隔を設定
+    for i, adj_time in enumerate(adjusted_times):
+        delay = int(round((adj_time - last_time) / dt))
+        notes = np.where((X >= groups[i][0]) & (X <= groups[i][-1]))[0].tolist()
+        result.append((delay, notes))
+        last_time = adj_time
+    
+    return result
+
+import numpy as np
+
+def group_notes(X, dt):
+    """
+    X: note-onの時間系列（秒単位）
+    dt: 目標とする時間分解能（秒単位）
+    
+    返り値: (int(dtの数), list(ノートのインデックス))のリスト
+    """
+    result = []
+    X = np.array(X)
+    
+    # 最初のグループを作成
+    current_group = []
+    current_time =0.0
+    
+    for i in range(len(X)):
+        # 現在のノートと前のグループの開始時間との差
+        time_diff = X[i] - current_time
+        
+        # 時間差がdtの0.5倍未満の場合、現在のグループに追加
+        if time_diff < 0.5 * dt:
+            current_group.append(i)
+        else:
+            # 新しいグループを開始する時間かどうかを判断
+            if time_diff > dt:
+                # 長い間隔がある場合、現在のグループを終了し、新しいグループを開始
+                result.append((int(round(time_diff / dt)), current_group))
+            else:
+                # dtに近い間隔の場合、現在のグループを終了し、新しいグループを開始
+                result.append((1, current_group))
+            current_group = [i]
+            current_time = X[i]
+    
+    # 最後のグループを追加
+    if current_group:
+        result.append((1, current_group))
+    
+    return result
