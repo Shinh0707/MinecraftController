@@ -8,12 +8,13 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 import uuid
 import numpy as np
 import Command.Command as cmd
-from Command.Command import SET_BLOCK_MODE, As, At, BlockDirectionPair, Commands, Command, DataGet, DataTarget, Effect, ExecuteChain, Kill, Positioned, RelativeSetBlock, RelativeSetBlockTYPE, Rotated, SetBlock, Fill, Execute, Run, SetDirection, Spawnpoint, Summon, Weather
+from Command.Command import SET_BLOCK_MODE, As, At, BlockDirectionPair, Commands, Command, DataGet, DataTarget, Effect, EffectParameters, ExecuteChain, Kill, Positioned, RelativeSetBlock, RelativeSetBlockTYPE, Rotated, SetBlock, Fill, Execute, Run, SetDirection, Spawnpoint, Summon, Weather
 from Helper.helpers import divide_box_discrete, mode_val, partition_3d_space
+from NBT import parameter
 from NBT.MBlocks import MBlocks
-from NBT.block_nbt import Block, CommandBlock
+from NBT.block_nbt import Block, CommandBlock, CommandBlockState, CommandBlockTag
 from NBT.nbt import NBTCompound, NBTTag, NBTType
-from NBT.parameter import EffectType, IntPosition, Rotation, Seconds, Tick, TimeSpec, WeatherSpec, angle, identifier, rotation
+from NBT.parameter import EffectType, IntPosition, Rotation, Seconds, Tick, TimeSpec, WeatherSpec, angle, boolean, facing, identifier, rotation
 from NBT.selector import Difficulty, GameMode, SelectorType, Target
 
 @dataclass
@@ -223,7 +224,7 @@ class SuperFlat(CompoundCommand):
 @dataclass
 class SummonWithEffect(CompoundCommand):
     base_summon: cmd.Summon
-    effects: List[tuple[EffectType, Union[int, Seconds, Tick], Optional[int], Optional[bool]]] = field(default_factory=list)
+    effects: List[EffectParameters] = field(default_factory=list)
     commands: Commands = field(default_factory=Commands, init=False)
 
     def __post_init__(self):
@@ -240,31 +241,27 @@ class SummonWithEffect(CompoundCommand):
         )
 
         # 各エフェクトに対してEffectコマンドを作成
-        for effect_type, duration, amplifier, hide_particles in self.effects:
+        for effect_params in self.effects:
             effect_cmd = Effect(
                 Effect.Operation.GIVE,
                 spawned_entity_target,
-                effect_type,
-                duration,
-                amplifier,
-                hide_particles
+                effect_params
             )
             # ExecuteコマンドでSummonの直後にEffectを適用
-            execute_cmd = Execute(
-                As(spawned_entity_target),
-                execute=Run(effect_cmd)
-            )
+            execute_cmd = ExecuteChain(
+                As(Target(SelectorType.EXECUTOR)),
+                effect_cmd
+            ).build()
             self.add_command(execute_cmd)
 
-    def add_effect(self, effect_type: EffectType, duration: Union[int, Seconds, Tick], 
-                   amplifier: Optional[int] = None, hide_particles: Optional[bool] = None):
+    def add_effect(self, effect_params: EffectParameters):
         """エフェクトを追加するメソッド"""
-        self.effects.append((effect_type, duration, amplifier, hide_particles))
+        self.effects.append(effect_params)
         self.__post_init__()  # コマンドを再生成
 
     def remove_effect(self, effect_type: EffectType):
         """指定したタイプのエフェクトを削除するメソッド"""
-        self.effects = [e for e in self.effects if e[0] != effect_type]
+        self.effects = [e for e in self.effects if e.effect_type != effect_type]
         self.__post_init__()  # コマンドを再生成
 
 @dataclass
@@ -274,7 +271,7 @@ class MultipleSummonWithEffects(CompoundCommand):
     pos: Optional[Union[IntPosition, tuple[IntPosition, IntPosition]]] = None
     mask: Optional[np.ndarray] = None
     nbt: Optional[NBTCompound] = None
-    effects: List[tuple[EffectType, Union[int, Seconds, Tick], Optional[int], Optional[bool]]] = field(default_factory=list)
+    effects: List[EffectParameters] = field(default_factory=list)
     commands: Commands = field(default_factory=Commands, init=False)
     group_tag: str = field(default_factory=lambda: f"multi_summon_{uuid.uuid4().hex[:8]}")
 
@@ -310,7 +307,7 @@ class MultipleSummonWithEffects(CompoundCommand):
             z = random.randint(min(pos1.z, pos2.z), max(pos1.z, pos2.z))
             return IntPosition(x=x, y=y, z=z)
         elif self.mask is not None:  # マスクを使用
-            spawn_positions = np.argwhere(self.mask)
+            spawn_positions = np.argwhere(self.mask) if self.mask.dtype == bool else self.mask
             if len(spawn_positions) == 0:
                 raise ValueError("No valid spawn positions in the given mask")
             x, y, z = random.choice(spawn_positions)
@@ -323,29 +320,25 @@ class MultipleSummonWithEffects(CompoundCommand):
 
     def _apply_effects(self):
         spawned_entities_target = Target(SelectorType.ALL_ENTITIES, tag=self.group_tag)
-        for effect_type, duration, amplifier, hide_particles in self.effects:
+        for effect_params in self.effects:
             effect_cmd = Effect(
                 Effect.Operation.GIVE,
                 spawned_entities_target,
-                effect_type,
-                duration,
-                amplifier,
-                hide_particles
+                effect_params
             )
-            execute_cmd = Execute(
-                As(spawned_entities_target),
-                execute=Run(effect_cmd)
-            )
+            execute_cmd = ExecuteChain(
+                As(Target(SelectorType.EXECUTOR)),
+                effect_cmd
+            ).build()
             self.add_command(execute_cmd)
 
-    def add_effect(self, effect_type: EffectType, duration: Union[int, Seconds, Tick], 
-                   amplifier: Optional[int] = None, hide_particles: Optional[bool] = None):
-        self.effects.append((effect_type, duration, amplifier, hide_particles))
+    def add_effect(self, effect_params: EffectParameters):
+        self.effects.append(effect_params)
         self.__post_init__()
         return self
 
     def remove_effect(self, effect_type: EffectType):
-        self.effects = [e for e in self.effects if e[0] != effect_type]
+        self.effects = [e for e in self.effects if e.effect_type != effect_type]
         self.__post_init__()
         return self
 
@@ -376,6 +369,46 @@ class SetCommandBlock(Command):
 
     def __command_str__(self):
         return f"{self.pos.abs} {self.command_block} replace"
+    
+@dataclass
+class SetCommandBlocks(CompoundCommand):
+    pos: IntPosition = field(default_factory=lambda: IntPosition(0,0,0))
+    _facing: facing = field(default_factory=lambda: facing(parameter.Facing.DOWN))
+
+    def __call__(self, mc, **kwargs):
+        cmds = Commands()
+        if len(self.commands) > 0:
+            current_pos = self.pos.copy()
+            first_cmd_block = CommandBlock(
+                block_state=CommandBlockState(
+                    conditional=boolean(False),
+                    facing=self._facing
+                ),
+                tags=CommandBlockTag(
+                    Command=command
+                ),
+                command_block_type=CommandBlock.CommandBlockType.IMPULSE
+            )
+            cmds.append(SetBlock(current_pos,first_cmd_block))
+            current_pos = current_pos.copy() + self._facing.forward()
+            if len(self.commands) > 1:
+                for command in self.commands[1:]:
+                    cmd_block = CommandBlock(
+                        block_state=CommandBlockState(
+                            conditional=boolean(True),
+                            facing=self._facing
+                        ),
+                        tags=CommandBlockTag(
+                            auto=boolean(True),
+                            Command=command
+                        ),
+                        command_block_type=CommandBlock.CommandBlockType.CHAIN
+                    )
+                    cmds.append(SetBlock(current_pos,cmd_block))
+                    current_pos = current_pos.copy() + self._facing.forward()
+        return cmds.__call__(mc, **kwargs)
+                
+
     
 @dataclass
 class AgentCommander(CompoundCommand):

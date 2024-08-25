@@ -11,7 +11,7 @@ from Helper.raw_json import RawJson
 from NBT.MBlocks import MBlocks
 from NBT.block_nbt import Block
 from NBT.item_nbt import MItem
-from NBT.parameter import Day, EffectType, IntPosition, Rotation, Seconds, Tick, WeatherSpec, angle, rotation, facing, boolean, identifier, dimension
+from NBT.parameter import Day, EffectParameters, EffectType, IntPosition, Rotation, Seconds, Tick, WeatherSpec, angle, rotation, facing, boolean, identifier, dimension
 from NBT.selector import Range, Target, SelectorType
 import NBT.selector as nslc
 from NBT.nbt import NBTCompound
@@ -455,6 +455,28 @@ class Clear(Command):
         return cmd_str
     
 @dataclass
+class Give(Command):
+    target: Target
+    item: Union[MItem, str]
+    count: Optional[int] = 1
+
+    def __post_init__(self):
+        if isinstance(self.item, str):
+            self.item = MItem(identifier(name=self.item))
+
+        if self.count is not None:
+            if not isinstance(self.count, int):
+                raise ValueError("count must be an integer")
+            if self.count < 1 or self.count > 2147483647:
+                raise ValueError("count must be between 1 and 2147483647")
+
+    def __command_str__(self) -> str:
+        command = f"{self.target} {self.item}"
+        if self.count != 1:
+            command += f" {self.count}"
+        return command
+    
+@dataclass
 class Kill(Command):
     target: Optional[Target] = None
 
@@ -471,9 +493,9 @@ class Spawnpoint(Command):
 
     def __command_str__(self) -> str:
         components = []
-        if self.target:
+        if self.target is not None:
             components.append(str(self.target))
-        if self.pos:
+        if self.pos is not None:
             components.append(self.pos.abs)
         if self.angle is not None:
             components.append(str(self.angle))
@@ -489,50 +511,20 @@ class Effect(Command):
 
     operation: Operation
     targets: Optional[Target] = None
-    effect: Optional[EffectType] = None
-    duration: Optional[Union[int, Seconds, Tick, str]] = None
-    amplifier: Optional[int] = None
-    hide_particles: Optional[Union[boolean,bool]] = None
+    effect_params: Optional[EffectParameters] = None
 
     def __post_init__(self):
-        if self.operation == Effect.Operation.GIVE and self.effect is None:
-            raise ValueError("Effect must be specified for 'give' operation")
-        
-        if isinstance(self.duration, (int, float)):
-            if self.effect and self.effect in [EffectType.INSTANT_DAMAGE, EffectType.INSTANT_HEALTH, EffectType.SATURATION]:
-                self.duration = Tick(int(self.duration))
-            else:
-                self.duration = Seconds(int(self.duration))
-        
-        if isinstance(self.duration, Seconds) and (self.duration.value < 1 or self.duration.value > 1000000):
-            raise ValueError("Duration must be between 1 and 1000000 seconds")
-        
-        if self.amplifier is not None and (self.amplifier < -2147483648 or self.amplifier > 2147483647):
-            raise ValueError("Amplifier must be between -2147483648 and 2147483647")
-        if self.hide_particles is not None and isinstance(self.hide_particles,bool):
-            self.hide_particles = boolean(self.hide_particles)
-
+        if self.operation == Effect.Operation.GIVE and self.effect_params is None:
+            raise ValueError("Effect parameters must be specified for 'give' operation")
+    
     def __command_str__(self) -> str:
         command_parts = [self.operation.value]
 
         if self.targets:
             command_parts.append(str(self.targets))
         
-        if self.effect:
-            command_parts.append(str(self.effect.to_identifier()))
-        
-        if self.operation == Effect.Operation.GIVE:
-            if self.duration:
-                if self.duration == "infinite":
-                    command_parts.append("infinite")
-                else:
-                    command_parts.append(str(self.duration.value))
-            
-            if self.amplifier is not None:
-                command_parts.append(str(self.amplifier))
-            
-            if self.hide_particles is not None:
-                command_parts.append(str(self.hide_particles))
+        if self.operation == Effect.Operation.GIVE and self.effect_params:
+            command_parts.append(str(self.effect_params))
 
         return " ".join(command_parts)
 

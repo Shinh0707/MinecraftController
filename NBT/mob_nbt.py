@@ -3,55 +3,49 @@ from typing import Any, Dict, Optional, Union
 from enum import Enum
 from dataclasses import dataclass, field
 from NBT.nbt import NBTCompound, NBTList, NBTTag, NBTType, UUID
-from NBT.parameter import block_predicate, attribute_name, boolean, dimension, IntPosition, identifier, rotation
+from NBT.parameter import Seconds, Tick, block_predicate, attribute_name, boolean, dimension, IntPosition, identifier, rotation
 
 @dataclass
 class StatusEffect(NBTCompound):
-    name: str = field(default="", init=False)
-    tags: list[NBTTag] = field(default_factory=list, init=False)
-    id: str = field(default="")
-    ambient: boolean = field(default_factory=boolean(_value=False), compare=False)
-    amplifier: int = field(default=0, compare=False)
-    duration: int = field(default=0, compare=False)
-    show_icon: boolean = field(default_factory=boolean(_value=True), compare=False)
-    show_particles: boolean = field(default_factory=boolean(_value=True), compare=False)
+    from Command.Command import EffectParameters
+    effect_params: EffectParameters = field(default=None)
     hidden_effect: Optional[StatusEffect] = field(default=None, compare=False)
 
     def __post_init__(self):
+        assert not self.effect_params
         tags = [
-            NBTTag("id", NBTType.STRING, self.id),
-            self.ambient.to_nbt_tag("ambient"),
-            NBTTag("amplifier", NBTType.INT, self.amplifier),
-            NBTTag("duration", NBTType.INT, self.duration),
-            self.show_icon.to_nbt_tag("show_icon"),
-            self.show_particles.to_nbt_tag("show_particles")
+            NBTTag("id", NBTType.STRING, self.effect_params.effect_type.minecraft_id),
+            boolean(self.effect_params.hide_particles).to_nbt_tag("ambient"),
+            NBTTag("amplifier", NBTType.INT, self.effect_params.amplifier),
+            NBTTag("duration", NBTType.INT, self.effect_params.duration.value if isinstance(self.effect_params.duration, (Seconds, Tick)) else self.effect_params.duration),
+            boolean(True).to_nbt_tag("show_icon"),
+            boolean(not self.effect_params.hide_particles).to_nbt_tag("show_particles")
         ]
         if self.hidden_effect:
             tags.append(self.hidden_effect)
         self.value = tags
 
     def to_command(self):
-        return f"{self.id} {self.duration} {self.amplifier} {self.show_particles}"
-
+        return str(self.effect_params)
 
 @dataclass
 class ActiveEffects(NBTList):
-    
-    effects: list[StatusEffect] = field(default_factory=[])
+    from Command.Command import EffectParameters
+    effects: list[EffectParameters] = field(default_factory=list)
 
-    def add_effect(self, effect: StatusEffect, replace: bool = True):
-        if effect in self.effects:
+    def add_effect(self, effect: EffectParameters, replace: bool = True):
+        if effect.effect_type in [e.effect_type for e in self.effects]:
             if replace:
-                self.effects[self.effects.index(effect)] = effect
+                self.effects = [e for e in self.effects if e.effect_type != effect.effect_type] + [effect]
         else:
             self.effects.append(effect)
 
-    def add_effects(self, *effects: StatusEffect, replace: bool = True):
+    def add_effects(self, *effects: EffectParameters, replace: bool = True):
         for effect in effects:
             self.add_effect(effect, replace)
 
     def __post_init__(self):
-        self.value = self.effects
+        self.value = [StatusEffect(effect) for effect in self.effects]
 
 
 @dataclass

@@ -16,7 +16,7 @@ import tqdm
 
 from Command import Command
 from Command.CompoundCommand import AdjustFill, AgentCommander, BaseSettings, GetPosition, GetRotation, SuperFlat
-from Command.Hobby import ImageCreator, MusicBoxCreator,convert_midi_to_grouped_noteblocks, playmidisound
+from Command.Hobby import ImageCreator, MazeGenerator, MusicBoxCreator,convert_midi_to_grouped_noteblocks, playmidisound
 from Helper.raw_json import RawJson, TextColor
 from NBT.MBlocks import MBlocks
 from NBT.block_nbt import Block, BlockState, CommandBlock, CommandBlockState, CommandBlockTag, NoteBlock, NoteBlockState, RedstoneRepeater, Slab, SlabState, SlabType
@@ -111,15 +111,23 @@ if __name__ == "__main__":
             start_point=SuperFlat.LayerStartPoint(1,SuperFlat.LayerReference.TOP)
         )
         sf_cmd(mc)
-        effect_cmd = Command.Effect(
-            Command.Effect.Operation.GIVE,
-            targets=Target(SelectorType.NEAREST_PLAYER),
-            effect=EffectType.ABSORPTION,
+        # EffectParameters オブジェクトを作成
+        effect_params = Command.EffectParameters(
+            effect_type=EffectType.ABSORPTION,
             duration=Seconds(20),
             amplifier=2,
             hide_particles=False
         )
-        effect_cmd(mc)
+
+        # Effect コマンドを作成
+        effect_cmd = Command.Effect(
+            Command.Effect.Operation.GIVE,
+            targets=Target(SelectorType.NEAREST_PLAYER),
+            effect_params=effect_params
+        )
+
+        # コマンドを実行
+        print(effect_cmd(mc))
         """
         cube = Cube(initial_position=player_pos+IntPosition(0,10,0),size=6, block=MBlocks.stone)
         cube.place()(mc)
@@ -128,10 +136,14 @@ if __name__ == "__main__":
         cube.translate(IntPosition(10,0,0))
         cube.place()(mc)
         """
-        #playmidisound(mc, player_pos, "Resources/Liszt_lacampanella.mid") # 理論上聞くことのできる結果
-        m_agent = MusicBoxCreator("Resources/Liszt_lacampanella.mid",player_pos,player_rot)
+        midi_name = "ナイト・オブ・ナイツ"
+        #playmidisound(mc, player_pos, f"Resources/{midi_name}.mid") # 理論上聞くことのできる結果
+        m_agent = MusicBoxCreator(f"Resources/{midi_name}.mid",player_pos,player_rot)
         m_agent(mc)
         # Pos:[-1824,-60,985]
+        #maze_gen = MazeGenerator(player_pos)
+        #print(maze_gen.commands)
+        #print(maze_gen(mc))
         """
         
         monster_id = "magma_cube"

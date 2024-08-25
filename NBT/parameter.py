@@ -2,7 +2,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 import math
-from typing import Any, Dict, List, Tuple, Union
+from turtle import forward
+from typing import Any, Dict, List, Optional, Tuple, Union
 import warnings
 from numbers import Number
 
@@ -298,6 +299,24 @@ class rotation:
         x = round(math.sin(azimuth))
         z = -round(math.cos(azimuth))  # 北が負のz軸方向なので、cosineの符号を反転
         return np.array([x, 0, z], dtype=np.int64)
+    
+    def forward(self,dist:int=1):
+        return IntPosition(self.numpy*dist)
+    
+    def back(self,dist:int=1):
+        return IntPosition(-self.numpy*dist)
+    
+    def right(self,dist:int=1):
+        return self.turn_right().forward(dist)
+    
+    def left(self,dist:int=1):
+        return self.turn_left().forward(dist)
+    
+    def turn_right(self,count:int=1):
+        return self + 4*count
+    
+    def turn_left(self,count:int=1):
+        return self - 4*count
 
 @dataclass
 class facing:
@@ -355,6 +374,49 @@ class facing:
                 f"{self.value.name} does not have a corresponding rotation. Using NORTH instead.")
             return rotation(Rotation.N)
         return self.angle().rotation()
+    
+    def _move(self, direction: int, dist: int) -> 'IntPosition':
+        if self.value in [Facing.UP, Facing.DOWN]:
+            return IntPosition(0, dist * direction * (1 if self.value == Facing.UP else -1), 0)
+        return self.rotation().forward(dist * direction)
+
+    def forward(self, dist: int = 1) -> 'IntPosition':
+        return self._move(1, dist)
+
+    def back(self, dist: int = 1) -> 'IntPosition':
+        return self._move(-1, dist)
+
+    def right(self, dist: int = 1) -> 'IntPosition':
+        return self.turn("right").forward(dist)
+
+    def left(self, dist: int = 1) -> 'IntPosition':
+        return self.turn("left").forward(dist)
+
+    def turn(self, direction: str, count: int = 1, under: Facing = Facing.DOWN) -> 'facing':
+        assert under != self.value and under != (-self).value, "Invalid under direction"
+        assert direction in ["right", "left"], "Direction must be 'right' or 'left'"
+
+        if self.value in [Facing.UP, Facing.DOWN]:
+            rotations = {
+                Facing.NORTH: {Facing.UP: {"right": Facing.EAST, "left": Facing.WEST},
+                               Facing.DOWN: {"right": Facing.WEST, "left": Facing.EAST}},
+                Facing.EAST: {Facing.UP: {"right": Facing.SOUTH, "left": Facing.NORTH},
+                              Facing.DOWN: {"right": Facing.NORTH, "left": Facing.SOUTH}},
+                Facing.SOUTH: {Facing.UP: {"right": Facing.WEST, "left": Facing.EAST},
+                               Facing.DOWN: {"right": Facing.EAST, "left": Facing.WEST}},
+                Facing.WEST: {Facing.UP: {"right": Facing.NORTH, "left": Facing.SOUTH},
+                              Facing.DOWN: {"right": Facing.SOUTH, "left": Facing.NORTH}},
+            }
+            new_facing = self.value
+            for _ in range(count):
+                new_facing = rotations[under][new_facing][direction]
+            return facing(new_facing)
+        else:
+            return self + (count if direction == "right" else -count)
+
+    turn_right = lambda self, count=1, under=Facing.DOWN: self.turn("right", count, under)
+    turn_left = lambda self, count=1, under=Facing.DOWN: self.turn("left", count, under)
+        
 
 
 @dataclass
@@ -714,3 +776,43 @@ class IntPosition(NBTTag):
         y = f"~{self.y}" if 'y' in relative_axes else str(self.y)
         z = f"~{self.z}" if 'z' in relative_axes else str(self.z)
         return f"{x} {y} {z}"
+
+@dataclass
+class EffectParameters:
+    effect_type: EffectType
+    duration: Optional[Union[int, Seconds, Tick, str]] = None
+    amplifier: Optional[int] = None
+    hide_particles: Optional[Union[boolean, bool]] = None
+
+    def __post_init__(self):
+        if isinstance(self.duration, (int, float)):
+            if self.effect_type in [EffectType.INSTANT_DAMAGE, EffectType.INSTANT_HEALTH, EffectType.SATURATION]:
+                self.duration = Tick(int(self.duration))
+            else:
+                self.duration = Seconds(int(self.duration))
+        
+        if isinstance(self.duration, Seconds) and (self.duration.value < 1 or self.duration.value > 1000000):
+            raise ValueError("Duration must be between 1 and 1000000 seconds")
+        
+        if self.amplifier is not None and (self.amplifier < -2147483648 or self.amplifier > 2147483647):
+            raise ValueError("Amplifier must be between -2147483648 and 2147483647")
+
+        if self.hide_particles is not None and isinstance(self.hide_particles, bool):
+            self.hide_particles = boolean(self.hide_particles)
+
+    def __str__(self) -> str:
+        command_parts = [str(self.effect_type.to_identifier())]
+        
+        if self.duration:
+            if self.duration == "infinite":
+                command_parts.append("infinite")
+            else:
+                command_parts.append(str(self.duration.value))
+        
+        if self.amplifier is not None:
+            command_parts.append(str(self.amplifier))
+        
+        if self.hide_particles is not None:
+            command_parts.append(str(self.hide_particles))
+        
+        return " ".join(command_parts)

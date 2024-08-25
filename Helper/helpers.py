@@ -1,4 +1,5 @@
 from collections import defaultdict
+import ctypes
 from enum import Enum
 from math import cos, radians, sin
 from typing import Dict, List, Tuple
@@ -9,6 +10,19 @@ from scipy import ndimage
 from Helper.math import flexible_round
 from NBT.MBlocks import MBlocks
 from NBT.block_nbt import Instrument
+
+# WindowsAPIの定数
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+
+# スリープを防ぐ関数
+def prevent_sleep():
+    ctypes.windll.kernel32.SetThreadExecutionState(
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+
+# スリープ防止を解除する関数
+def allow_sleep():
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
 
 class NamedEnum(Enum):
     def __str__(self):
